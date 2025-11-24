@@ -50,6 +50,7 @@ set(CONFIG_PROCESSOR
    )
 
 set(BATTERY_SOURCES
+    modules/battery/battery_state_adapter.h
     modules/battery/battery_state_handler.h
     modules/battery/battery_state_handler.cpp
     modules/battery/battery_state_node.h
