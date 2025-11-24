@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package Base;
+
+message BaseControl {
+
+    enum ControlLevel {
+        RAW = 0; // cmd_vel before smoothed
+        SMOOTHED = 1; // cmd_vel after smoothed
+        UNSAFETY = 2; // cmd_vel after collision detection
+    }
+    ControlLevel controlLevel = 1;
+    double linearVelocity = 2; // by X axis
+    double angularVelocity = 3; // by Z axis(yaw)
+}
+
+message BaseControlStatus {
+
+    enum Status {
+        READY_OK = 0;
+        RUNNING = 1;
+        IDLE  = 2;
+        STOPPED = 3;
+        ERROR = 4;
+    }
+
+    Status controlStatus = 1;
+}

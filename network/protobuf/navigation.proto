@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package Navigation;
+
+message Pose {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double orientation_w = 4;
+  double orientation_x = 5;
+  double orientation_y = 6;
+  double orientation_z = 7;
+}
+
+message PoseWithCovariance {
+  Pose pose = 1;
+  repeated double covariance = 2;
+}
+
+
+// Request section
+
+message GoToPose {
+  Pose pose = 1;
+}
+
+message SetInitialPose {
+  PoseWithCovariance pose = 1;
+}
+
+message GoThroughPoses {
+  repeated Pose poses = 1;
+}
+
+message FollowWaypoints {
+  repeated Pose waypoints = 1;
+}
+
+message Spin {
+  double target_yaw = 1;
+  double time_allowance = 2;
+}
+
+message CancelTask {}
+
+message IsTaskComplete {}
+
+message GetResult {}
+
+message NavCommandRequest {
+  oneof command {
+    GoToPose go_to_pose = 1;
+    SetInitialPose set_initial_pose = 2;
+    GoThroughPoses go_through_poses = 3;
+    FollowWaypoints follow_waypoints = 4;
+    Spin spin = 5;
+    CancelTask cancel_task = 6;
+    IsTaskComplete is_task_complete = 7;
+    GetResult get_result = 8;
+  }
+  bool request_feedback = 9;
+}
+
+// Response section
+
+enum CommandStatus {
+  SUCCESS = 0;
+  FAILURE = 1;
+  IN_PROGRESS = 2;
+  CANCELED = 3;
+}
+
+message GoToPoseFeedback {
+  Pose current_pose = 1;
+}
+
+message GoThroughPosesFeedback {
+  Pose current_pose = 1;
+}
+
+message FollowWaypointsFeedback {
+  uint32 current_waypoint = 1;
+}
+
+message SpinFeedback {
+  double angular_distance_traveled = 1;
+}
+
+message Response {
+  oneof response {
+    GoToPoseFeedback go_to_pose_feedback = 1;
+    GoThroughPosesFeedback go_through_poses_feedback = 2;
+    FollowWaypointsFeedback follow_waypoints_feedback = 3;
+    SpinFeedback spin_feedback = 4;
+  }
+}
+
+message NavCommandResponse {
+  CommandStatus status = 1;
+  optional Response response = 2;
+
+}

@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package IMU;
+
+
+message IMURawData{
+    message Accelerometer{
+        float x = 1;
+        float y = 2;
+        float z = 3;
+    }
+
+    message Gyroscope{
+        float x = 1;
+        float y = 2;
+        float z = 3;
+    }
+
+    message Magnitometer{
+        float x = 1;
+        float y = 2;
+        float z = 3;
+    }
+
+    Accelerometer accelerometer = 1;
+    Gyroscope gyroscope = 2;
+    Magnitometer magnitometer = 3;
+
+    float temperature = 4; // IMU temperature(if exist), Celsium degrees
+}

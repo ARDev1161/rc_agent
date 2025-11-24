@@ -1,0 +1,60 @@
+syntax = "proto3";
+
+package Power;
+
+message BatteryState {
+
+    // Constants for Power Supply Status
+    enum PowerSupplyStatus {
+        UNKNOWN = 0;
+        CHARGING = 1;
+        DISCHARGING = 2;
+        NOT_CHARGING = 3;
+        FULL = 4;
+    }
+
+    // Constants for Power Supply Health
+    enum PowerSupplyHealth {
+        HEALTH_UNKNOWN = 0;
+        HEALTH_GOOD = 1;
+        OVERHEAT = 2;
+        DEAD = 3;
+        OVERVOLTAGE = 4;
+        UNSPEC_FAILURE = 5;
+        COLD = 6;
+        WATCHDOG_TIMER_EXPIRE = 7;
+        SAFETY_TIMER_EXPIRE = 8;
+    }
+
+    // Constants for Power Supply Technology
+    enum PowerSupplyTechnology {
+        TECHNOLOGY_UNKNOWN = 0;
+        NIMH = 1;
+        LION = 2;
+        LIPO = 3;
+        LIFE = 4;
+        NICD = 5;
+        LIMN = 6;
+    }
+
+    // Main fields
+    float voltage = 1;                       // Voltage in Volts
+    float temperature = 2;                   // Temperature in Degrees Celsius
+    float current = 3;                       // Current in Amperes (positive for charging, negative for discharging)
+    float charge = 4;                        // Charge in Ah
+    float capacity = 5;                      // Capacity in Ah
+    float design_capacity = 6;               // Design capacity in Ah
+    float percentage = 7;                    // Charge percentage (0.0 to 1.0)
+
+    PowerSupplyStatus power_supply_status = 8;         // Power supply status
+    PowerSupplyHealth power_supply_health = 9;         // Power supply health
+    PowerSupplyTechnology power_supply_technology = 10; // Power supply technology
+
+    bool present = 11;                       // Is battery present?
+
+    repeated float cell_voltage = 12;        // Individual cell voltages in Volts
+    repeated float cell_temperature = 13;    // Individual cell temperatures in Celsius
+
+    string location = 14;                     // Location of the battery (optional)
+    string serial_number = 15;               // Battery serial number (optional)
+}

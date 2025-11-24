@@ -1,0 +1,41 @@
+syntax = "proto3";
+
+package map_service;
+
+message GetMapRequest {
+  // Empty
+}
+
+// Структура Pose для передачи происхождения карты
+message Pose {
+  float position_x = 1;
+  float position_y = 2;
+  float position_z = 3;
+  float orientation_x = 4;
+  float orientation_y = 5;
+  float orientation_z = 6;
+  float orientation_w = 7;
+}
+
+// Передача OccupancyGrid
+message OccupancyGrid {
+  uint32 width = 1;
+  uint32 height = 2;
+  float resolution = 3; // метров на клетку
+  bytes data = 4; // данные карты
+  Pose origin = 5; // Координата (0,0) карты в мировой системе
+
+  // (Необязательно) frame_id, если хотим понимать в какой системе координат
+  // "лежит" карта. Это можно сделать и строкой
+  string frame_id = 6;
+}
+
+// Ответ на запрос карты
+message GetMapResponse {
+  OccupancyGrid map = 1;
+  Pose robotPose = 2;
+}
+
+service MapService {
+  rpc GetMap(GetMapRequest) returns (GetMapResponse);
+}

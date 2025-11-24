@@ -1,0 +1,68 @@
+syntax = "proto3";
+
+package Robot;
+
+import "base.proto";
+import "drives.proto";
+import "imu.proto";
+import "power.proto";
+import "map.proto";
+import "navigation.proto";
+import "credentials.proto";
+
+message Controls{
+     message Light{
+          uint32 ledLeftPower = 1; // 0 to 255, dutycycle
+          uint32 ledRightPower = 2; // 0 to 255, dutycycle
+     }
+
+     message System{
+          bool haltFlag = 1; // Flag for shutdown
+          bool restartFlag = 2; // Flag for reboot
+          string onTime = 3;
+     }
+
+// Level 1: raw drives controlling
+     Drives.CameraServos cameraServos = 1;
+     Drives.WheelMotors wheelMotors = 2;
+     Drives.HandMotors handMotors = 3;
+// Level 2: robot base control via linear & angular speed
+     Base.BaseControl baseControl = 4;
+// Level 3: navigation based control
+     Navigation.NavCommandRequest navControl = 5;
+
+     Light light = 6;
+     System system = 7;
+}
+
+message Sensors{
+     Drives.WheelEncoders wheelEncoders = 1;
+     Drives.HandEncoders handEncoders = 2;
+
+     Base.BaseControlStatus baseControlStatus = 3;
+     Navigation.NavCommandResponse navControlStatus = 4;
+
+     Power.BatteryState batteryState = 5;
+     IMU.IMURawData imu = 6;
+     int32 CPUTemperature = 7;
+}
+
+service ClientOnRobot{
+    // Broadcast message & waiting clients answers
+    rpc SendServerCredentials (credentials.ManagerCredentials) returns (stream credentials.RobotCredentials);
+    // Unary exchange
+    rpc DataExchange (Sensors) returns (Controls);
+    // Bidirectional stream
+    rpc DataStreamExchange (stream Sensors) returns (stream Controls);
+    // Map service
+    rpc MapStream(stream map_service.GetMapResponse) returns (stream map_service.GetMapRequest);
+}
+
+service ServerOnRobot{
+    // Unary exchange
+    rpc DataExchange (Controls) returns (Sensors);
+    // Bidirectional stream
+    rpc DataStreamExchange (stream Controls) returns (stream Sensors);
+    // Map service
+    rpc MapStream(stream map_service.GetMapRequest) returns (stream map_service.GetMapResponse);
+}
