@@ -21,6 +21,17 @@ int NetworkController::startArpingService(int bcastPort, int arpingPort)
     return arpService->startArpingService(connected);
 }
 
+namespace {
+
+constexpr const char* kConnectionStateNames[] = {
+    "Discovering",
+    "Connecting",
+    "Connected",
+    "Reconnecting"
+};
+
+} // namespace
+
 void NetworkController::stopArpingService()
 {
     arpService->stopArpingService();
@@ -30,22 +41,11 @@ void NetworkController::stopArpingService()
 void NetworkController::setConnectionState(ConnectionState state)
 {
     connection_state_ = state;
-    std::cout << "Connection state -> ";
-    switch (connection_state_) {
-    case ConnectionState::Discovering:
-        std::cout << "Discovering";
-        break;
-    case ConnectionState::Connecting:
-        std::cout << "Connecting";
-        break;
-    case ConnectionState::Connected:
-        std::cout << "Connected";
-        break;
-    case ConnectionState::Reconnecting:
-        std::cout << "Reconnecting";
-        break;
-    }
-    std::cout << std::endl;
+    const auto idx = static_cast<std::size_t>(connection_state_);
+    const char* name = idx < (sizeof(kConnectionStateNames)/sizeof(kConnectionStateNames[0]))
+                       ? kConnectionStateNames[idx]
+                       : "Unknown";
+    std::cout << "Connection state -> " << name << std::endl;
 }
 
 std::string NetworkController::getLastConnectedIP()

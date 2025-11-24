@@ -51,6 +51,7 @@ public:
     };
 
 private:
+    static const char* connectionStateName(ConnectionState state);
     /// Shared pointer to Controls object for network control.
     std::shared_ptr<Controls> controls_;
     /// Shared pointer to Sensors object for sensor data.
