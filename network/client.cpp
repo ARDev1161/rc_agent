@@ -1,5 +1,43 @@
 #include "client.h"
 
+namespace {
+
+template<typename StreamT, typename FactoryFn, typename PumpFn>
+grpc::Status runStreamWithRetry(const std::string &stream_name,
+                                bool &stopped_flag,
+                                int retry_delay_ms,
+                                FactoryFn &&stream_factory,
+                                PumpFn &&pump_loop)
+{
+    grpc::Status status;
+    bool retry = true;
+    stopped_flag = false;
+
+    while (retry) {
+        grpc::ClientContext context;
+        auto stream = stream_factory(context);
+        if (!stream) {
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "Stream factory returned null");
+        }
+
+        pump_loop(*stream);
+
+        stream->WritesDone();
+        status = stream->Finish();
+        if (status.ok()) {
+            retry = false;
+        } else {
+            std::cout << "Error " << status.error_code() << " : " << status.error_message() << std::endl;
+            std::cout << stream_name << " rpc failed." << std::endl;
+            std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms));
+        }
+    }
+
+    return status;
+}
+
+} // namespace
+
 grpcClient::grpcClient(std::shared_ptr<grpc::Channel> channel,
                std::shared_ptr<Controls> controlsPtr,
                std::shared_ptr<Sensors> sensorsPtr,
@@ -57,89 +95,52 @@ void grpcClient::stopStream()
 
 grpc::Status grpcClient::DataStreamExchange()
 {
-    grpc::Status status;
-    bool retry = true;
-    stoppedStream = false;
+    return runStreamWithRetry<grpc::ClientReaderWriter<Sensors, Controls>>(
+        "DataStreamExchange",
+        stoppedStream,
+        retryDelayMilliseconds,
+        [this](grpc::ClientContext &context) {
+            return std::shared_ptr<grpc::ClientReaderWriter<Sensors, Controls>>(
+                stub_->DataStreamExchange(&context));
+        },
+        [this](grpc::ClientReaderWriter<Sensors, Controls> &stream) {
+            while(!stoppedStream && (clientChannel->GetState(true) == 2))
+            {
+                std::unique_lock<std::mutex> lock(muClient);
 
-    while(retry){
-        // Context for the client. It could be used to convey extra information to
-        // the server and/or tweak certain RPC behaviors.
-        grpc::ClientContext context;
-
-        std::shared_ptr<grpc::ClientReaderWriter<Sensors, Controls> > stream(
-            stub_->DataStreamExchange(&context));
-
-        while(!stoppedStream && (clientChannel->GetState(true) == 2) )
-        {
-            std::unique_lock<std::mutex> lock(muClient);
-
-            // Write sensors
-            stream->Write(*sensors_);
-
-            // Read controls & write to protos
-            stream->Read(controls_.get());
+                stream.Write(*sensors_);
+                stream.Read(controls_.get());
+            }
         }
-
-        stream->WritesDone();
-
-        status = stream->Finish();
-        if (status.ok())
-            retry = false;
-        else {
-            std::cout << "Error " << status.error_code() << " : " << status.error_message() << std::endl;
-            std::cout << "DataStreamExchange rpc failed." << std::endl;
-            std::this_thread::sleep_for(std::chrono::milliseconds( retryDelayMilliseconds ));
-        }
-
-    }
-
-    stoppedStream = false;
-
-    return status;
+    );
 }
 
 grpc::Status grpcClient::MapStream()
 {
-    grpc::Status status;
-    bool retry = true; // Flag that defined need connection retry or no
-    stoppedStream = false;
-
-    while(retry){
-        map_service::GetMapRequest request;
-        grpc::ClientContext context;
-
-        {
+    return runStreamWithRetry<grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest>>(
+        "MapStream",
+        stoppedStream,
+        retryDelayMilliseconds,
+        [this](grpc::ClientContext &context) {
             std::unique_lock<std::mutex> lock(muMap);
             if (!map_) {
-                return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "No map data to send.");
+                return std::shared_ptr<grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest>>(nullptr);
             }
-        }
+            return std::shared_ptr<grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest>>(
+                stub_->MapStream(&context));
+        },
+        [this](grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest> &stream) {
+            map_service::GetMapRequest request;
 
-        std::shared_ptr<grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest> > stream(
-            stub_->MapStream(&context));
-
-        while(!stoppedStream && (clientChannel->GetState(true) == 2) )
-        {
-            // Write map
+            while(!stoppedStream && (clientChannel->GetState(true) == 2))
             {
-                std::unique_lock<std::mutex> lock(muMap);
-                stream->Write(*map_);
+                {
+                    std::unique_lock<std::mutex> lock(muMap);
+                    stream.Write(*map_);
+                }
+
+                stream.Read(&request);
             }
-
-            // Read map
-            stream->Read(&request);
         }
-
-        stream->WritesDone();
-
-        status = stream->Finish();
-        if (status.ok())
-            retry = false;
-        else {
-            std::cout << "Error " << status.error_code() << " : " << status.error_message() << std::endl;
-            std::cout << "MapStream rpc failed." << std::endl;
-        }
-    }
-
-    return status;
+    );
 }
