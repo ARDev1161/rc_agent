@@ -75,8 +75,8 @@ void RobotNavigator::checkNavCommand() {
 
     if (prev != cur) {
         prev = cur;
-        // Process the navigation command. The function handleNavCommandRequest must be defined in the handler
-        handleNavCommandRequest(safeCopy, *this);
+        // Process the navigation command via the command factory
+        processNavCommand(safeCopy, *this);
 
         // Creating a response if nav_cmd_resp_ is valid and createNavCommandResponse is defined
         if (nav_cmd_resp_) {

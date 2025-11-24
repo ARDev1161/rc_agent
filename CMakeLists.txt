@@ -57,6 +57,9 @@ set(BATTERY_SOURCES
 )
 
 set(NAVIGATOR_SOURCES
+    modules/nav2/nav_command.h
+    modules/nav2/nav_command.cpp
+    modules/nav2/robot_navigator_handler.cpp
     modules/nav2/robot_navigator_handler.h
     modules/nav2/robot_navigator.h
     modules/nav2/robot_navigator.cpp
