@@ -6,12 +6,14 @@ NetworkController::NetworkController(std::shared_ptr<Controls> controlsPtr,
                                      std::shared_ptr<map_service::GetMapResponse> mapPtr) :
     controls_(controlsPtr),
     sensors_(sensorsPtr),
-    map_(mapPtr)
+    map_(mapPtr),
+    reconnect_strategy_(std::make_unique<ConstantReconnectStrategy>(std::chrono::milliseconds(1000)))
 {
 }
 
 int NetworkController::startArpingService(int bcastPort, int arpingPort)
 {
+    setConnectionState(ConnectionState::Discovering);
     if(!arpService)
         arpService = std::make_shared<Arper>(*this, bcastPort, arpingPort);
     std::cout << "Arping service started" << std::endl;
@@ -23,6 +25,27 @@ void NetworkController::stopArpingService()
 {
     arpService->stopArpingService();
     std::cout << "Arping service stopped" << std::endl;
+}
+
+void NetworkController::setConnectionState(ConnectionState state)
+{
+    connection_state_ = state;
+    std::cout << "Connection state -> ";
+    switch (connection_state_) {
+    case ConnectionState::Discovering:
+        std::cout << "Discovering";
+        break;
+    case ConnectionState::Connecting:
+        std::cout << "Connecting";
+        break;
+    case ConnectionState::Connected:
+        std::cout << "Connected";
+        break;
+    case ConnectionState::Reconnecting:
+        std::cout << "Reconnecting";
+        break;
+    }
+    std::cout << std::endl;
 }
 
 std::string NetworkController::getLastConnectedIP()
@@ -48,6 +71,7 @@ void NetworkController::onDiscovered(const ControlMachine &machine)
 
 int NetworkController::runClient(std::string &server_address, bool tryConnectIfFailed)
 {
+    setConnectionState(ConnectionState::Connecting);
     clientPtr = std::make_shared<grpcClient>(
         grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials()),
         controls_,
@@ -62,7 +86,10 @@ int NetworkController::runClient(std::string &server_address, bool tryConnectIfF
      {
         this->clientStatus = clientPtr->MapStream();
         if(clientStatus.ok())
+        {
             connected = true;
+            setConnectionState(ConnectionState::Connected);
+        }
      }
     );
     mapThr.detach();
@@ -71,7 +98,10 @@ int NetworkController::runClient(std::string &server_address, bool tryConnectIfF
      {
         clientStatus = this->clientPtr->DataStreamExchange();
         if(clientStatus.ok())
+        {
             connected = true;
+            setConnectionState(ConnectionState::Connected);
+        }
      }
     );
     dataThr.detach();
@@ -85,17 +115,34 @@ int NetworkController::runClient(bool tryConnectToUnverified)
     if(controlMachineAddresses.empty())
         return -1;
 
-    ControlMachine *cur = controlMachineAddresses[0];
-    std::string curAddr = cur->getIpAddr();
-    controlMachineAddresses.erase( controlMachineAddresses.begin() );
+    int attempt = 0;
+    while(!controlMachineAddresses.empty())
+    {
+        ControlMachine *cur = controlMachineAddresses[0];
+        std::string curAddr = cur->getIpAddr();
+        controlMachineAddresses.erase( controlMachineAddresses.begin() );
 
-    if(curAddr == "\0")
-        return -2;
+        if(curAddr == "\0")
+            return -2;
 
-    curAddr += ":" + std::to_string(cur->grpcPort());
+        curAddr += ":" + std::to_string(cur->grpcPort());
 
-    std::cout << "Connecting to - " << curAddr << std::endl;
-    return runClient(curAddr, true);
+        std::cout << "Connecting to - " << curAddr << std::endl;
+        setConnectionState(ConnectionState::Connecting);
+        runClient(curAddr, true);
+
+        // Give async streams a brief moment to establish connection
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (connected || !tryConnectToUnverified) {
+            return 0;
+        }
+
+        ++attempt;
+        setConnectionState(ConnectionState::Reconnecting);
+        std::this_thread::sleep_for(reconnect_strategy_->nextDelay(attempt));
+    }
+
+    return connected ? 0 : -1;
 }
 
 int NetworkController::runServer(std::string &address_mask)

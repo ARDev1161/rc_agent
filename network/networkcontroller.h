@@ -1,7 +1,9 @@
 #ifndef NETWORKCONTROLLER_H
 #define NETWORKCONTROLLER_H
 
+#include <chrono>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <thread>
 
@@ -17,6 +19,38 @@
  */
 class NetworkController : public IControlMachineObserver
 {
+public:
+    /**
+     * @brief Connection states for the network controller.
+     */
+    enum class ConnectionState {
+        Discovering,
+        Connecting,
+        Connected,
+        Reconnecting
+    };
+
+    /**
+     * @brief Strategy interface for reconnection delays.
+     */
+    class ReconnectStrategy {
+    public:
+        virtual ~ReconnectStrategy() = default;
+        virtual std::chrono::milliseconds nextDelay(int attempt) const = 0;
+    };
+
+    /**
+     * @brief Constant backoff strategy used by default.
+     */
+    class ConstantReconnectStrategy : public ReconnectStrategy {
+    public:
+        explicit ConstantReconnectStrategy(std::chrono::milliseconds delay) : delay_(delay) {}
+        std::chrono::milliseconds nextDelay([[maybe_unused]] int attempt) const override { return delay_; }
+    private:
+        std::chrono::milliseconds delay_;
+    };
+
+private:
     /// Shared pointer to Controls object for network control.
     std::shared_ptr<Controls> controls_;
     /// Shared pointer to Sensors object for sensor data.
@@ -47,6 +81,13 @@ class NetworkController : public IControlMachineObserver
 
     /// Last connected IP address.
     std::string lastConnectedIP;
+
+    /// Current connection state.
+    ConnectionState connection_state_{ConnectionState::Discovering};
+    /// Strategy defining reconnection backoff.
+    std::unique_ptr<ReconnectStrategy> reconnect_strategy_;
+
+    void setConnectionState(ConnectionState state);
 public:
     /**
      * @brief Constructs a NetworkController.
