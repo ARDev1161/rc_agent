@@ -15,7 +15,7 @@
  * The NetworkController class manages network operations by starting ARP services,
  * running gRPC clients and servers, and maintaining connection status and control machine addresses.
  */
-class NetworkController
+class NetworkController : public IControlMachineObserver
 {
     /// Shared pointer to Controls object for network control.
     std::shared_ptr<Controls> controls_;
@@ -113,6 +113,11 @@ public:
      * @return std::string Last connected IP address.
      */
     std::string getLastConnectedIP();
+
+    /**
+     * @brief Observer callback invoked when Arper discovers a control machine.
+     */
+    void onDiscovered(const ControlMachine &machine) override;
 
     /**
      * @brief Returns the gRPC client instance.

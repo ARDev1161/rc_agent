@@ -13,7 +13,7 @@ NetworkController::NetworkController(std::shared_ptr<Controls> controlsPtr,
 int NetworkController::startArpingService(int bcastPort, int arpingPort)
 {
     if(!arpService)
-        arpService = std::make_shared<Arper>(controlMachineAddresses, bcastPort, arpingPort);
+        arpService = std::make_shared<Arper>(*this, bcastPort, arpingPort);
     std::cout << "Arping service started" << std::endl;
 
     return arpService->startArpingService(connected);
@@ -28,6 +28,22 @@ void NetworkController::stopArpingService()
 std::string NetworkController::getLastConnectedIP()
 {
     return lastConnectedIP;
+}
+
+void NetworkController::onDiscovered(const ControlMachine &machine)
+{
+    // Update existing entry or add new
+    for (ControlMachine* control : controlMachineAddresses) {
+        if (control->address().sin_addr.s_addr == machine.address().sin_addr.s_addr) {
+            control->setLastSeen(machine.getLastSeen());
+            control->setGrpcPort(machine.grpcPort());
+            return;
+        }
+    }
+
+    ControlMachine* control = new ControlMachine(machine.address(), machine.grpcPort());
+    control->setLastSeen(machine.getLastSeen());
+    controlMachineAddresses.push_back(control);
 }
 
 int NetworkController::runClient(std::string &server_address, bool tryConnectIfFailed)

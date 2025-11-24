@@ -1,7 +1,7 @@
 #include "arper.h"
 
-Arper::Arper(std::vector<ControlMachine*> &controlMachineAddresses, int bcastPort, int arpingPort):
-    controlMachineAddresses(controlMachineAddresses),
+Arper::Arper(IControlMachineObserver &observer, int bcastPort, int arpingPort):
+    observer_(observer),
     bcastPort(bcastPort),
     arpingPort(arpingPort)
 {
@@ -144,20 +144,9 @@ int Arper::startArpingService(bool &connected)
                 message.erase(0, pos + separator.length());
                 int curGRPCPort = stoi(message.substr(0, message.find(separator)));
 
-                // Find or create a ControlMachine entry
-                bool controlMachineFound = false;
-                for (ControlMachine* control : controlMachineAddresses) {
-                    if (control->address().sin_addr.s_addr == control_addr.sin_addr.s_addr) {
-                        control->setLastSeen(std::chrono::system_clock::now());
-                        controlMachineFound = true;
-                        break;
-                    }
-                }
-                if (!controlMachineFound) {
-                    ControlMachine* control = new ControlMachine(control_addr, curGRPCPort);
-                    control->setLastSeen(std::chrono::system_clock::now());
-                    controlMachineAddresses.push_back(control);
-                }
+                ControlMachine control(control_addr, curGRPCPort);
+                control.setLastSeen(std::chrono::system_clock::now());
+                observer_.onDiscovered(control);
             }
         }
     });
@@ -233,6 +222,11 @@ void ControlMachine::setGrpcPort(int newGrpcPort)
 }
 
 sockaddr_in& ControlMachine::address()
+{
+    return m_address;
+}
+
+const sockaddr_in& ControlMachine::address() const
 {
     return m_address;
 }
