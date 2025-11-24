@@ -23,11 +23,11 @@ int NetworkController::startArpingService(int bcastPort, int arpingPort)
 
 namespace {
 
-constexpr const char* kConnectionStateNames[] = {
-    "Discovering",
-    "Connecting",
-    "Connected",
-    "Reconnecting"
+const std::unordered_map<NetworkController::ConnectionState, const char*> kConnectionStateNames = {
+    {NetworkController::ConnectionState::Discovering, "Discovering"},
+    {NetworkController::ConnectionState::Connecting,   "Connecting"},
+    {NetworkController::ConnectionState::Connected,    "Connected"},
+    {NetworkController::ConnectionState::Reconnecting, "Reconnecting"},
 };
 
 } // namespace
@@ -41,11 +41,15 @@ void NetworkController::stopArpingService()
 void NetworkController::setConnectionState(ConnectionState state)
 {
     connection_state_ = state;
-    const auto idx = static_cast<std::size_t>(connection_state_);
-    const char* name = idx < (sizeof(kConnectionStateNames)/sizeof(kConnectionStateNames[0]))
-                       ? kConnectionStateNames[idx]
-                       : "Unknown";
-    std::cout << "Connection state -> " << name << std::endl;
+    std::cout << "Connection state -> " << connectionStateName(connection_state_) << std::endl;
+}
+
+const char* NetworkController::connectionStateName(ConnectionState state)
+{
+    if (auto it = kConnectionStateNames.find(state); it != kConnectionStateNames.end()) {
+        return it->second;
+    }
+    return "Unknown";
 }
 
 std::string NetworkController::getLastConnectedIP()
