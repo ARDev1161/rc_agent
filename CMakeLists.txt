@@ -50,6 +50,7 @@ set(CONFIG_PROCESSOR
    )
 
 set(BATTERY_SOURCES
+    modules/battery/battery_state_adapter.h
     modules/battery/battery_state_handler.h
     modules/battery/battery_state_handler.cpp
     modules/battery/battery_state_node.h
@@ -57,6 +58,9 @@ set(BATTERY_SOURCES
 )
 
 set(NAVIGATOR_SOURCES
+    modules/nav2/nav_command.h
+    modules/nav2/nav_command.cpp
+    modules/nav2/robot_navigator_handler.cpp
     modules/nav2/robot_navigator_handler.h
     modules/nav2/robot_navigator.h
     modules/nav2/robot_navigator.cpp

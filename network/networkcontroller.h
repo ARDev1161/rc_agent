@@ -1,9 +1,12 @@
 #ifndef NETWORKCONTROLLER_H
 #define NETWORKCONTROLLER_H
 
+#include <chrono>
 #include <iostream>
 #include <string>
 #include <thread>
+#include <memory>
+#include <unordered_map>
 
 #include "client.h"
 #include "server.h"
@@ -15,8 +18,41 @@
  * The NetworkController class manages network operations by starting ARP services,
  * running gRPC clients and servers, and maintaining connection status and control machine addresses.
  */
-class NetworkController
+class NetworkController : public IControlMachineObserver
 {
+public:
+    /**
+     * @brief Connection states for the network controller.
+     */
+    enum class ConnectionState {
+        Discovering,
+        Connecting,
+        Connected,
+        Reconnecting
+    };
+
+    /**
+     * @brief Strategy interface for reconnection delays.
+     */
+    class ReconnectStrategy {
+    public:
+        virtual ~ReconnectStrategy() = default;
+        virtual std::chrono::milliseconds nextDelay(int attempt) const = 0;
+    };
+
+    /**
+     * @brief Constant backoff strategy used by default.
+     */
+    class ConstantReconnectStrategy : public ReconnectStrategy {
+    public:
+        explicit ConstantReconnectStrategy(std::chrono::milliseconds delay) : delay_(delay) {}
+        std::chrono::milliseconds nextDelay([[maybe_unused]] int attempt) const override { return delay_; }
+    private:
+        std::chrono::milliseconds delay_;
+    };
+
+private:
+    static const char* connectionStateName(ConnectionState state);
     /// Shared pointer to Controls object for network control.
     std::shared_ptr<Controls> controls_;
     /// Shared pointer to Sensors object for sensor data.
@@ -47,6 +83,16 @@ class NetworkController
 
     /// Last connected IP address.
     std::string lastConnectedIP;
+
+    /// Current connection state.
+    ConnectionState connection_state_{ConnectionState::Discovering};
+    /// Strategy defining reconnection backoff.
+    std::unique_ptr<ReconnectStrategy> reconnect_strategy_;
+
+    /// Guard to avoid spawning multiple clients in parallel.
+    bool client_started_{false};
+
+    void setConnectionState(ConnectionState state);
 public:
     /**
      * @brief Constructs a NetworkController.
@@ -113,6 +159,11 @@ public:
      * @return std::string Last connected IP address.
      */
     std::string getLastConnectedIP();
+
+    /**
+     * @brief Observer callback invoked when Arper discovers a control machine.
+     */
+    void onDiscovered(const ControlMachine &machine) override;
 
     /**
      * @brief Returns the gRPC client instance.

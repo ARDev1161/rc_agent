@@ -4,6 +4,7 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
+#include <memory>
 #include <mutex>
 #include "robot.grpc.pb.h"
 
@@ -58,6 +59,7 @@ public:
      * @param baseControlMsg Pointer to a BaseControl protobuf message used for monitoring commands.
      */
     explicit BaseControlNode(Base::BaseControl *baseControlMsg);
+    ~BaseControlNode();
 
     /**
      * @brief Publishes a Twist message to a specified topic.
@@ -81,6 +83,8 @@ public:
     ControlStatus getBaseControlStatus();
     
 private:
+    class ControlStateMachine;
+
     /**
      * @brief Callback function for odometry messages.
      *
@@ -121,6 +125,9 @@ private:
 
     /// Pointer to the BaseControl protobuf message used for monitoring control commands.
     Base::BaseControl* baseControlProtoMsg_;
+
+    /// State machine encapsulating status transitions based on odometry
+    std::unique_ptr<ControlStateMachine> state_machine_;
 
     /// Current control status
     ControlStatus current_status_ = ControlStatus::READY_OK;

@@ -68,6 +68,11 @@ public:
     sockaddr_in& address();
 
     /**
+     * @brief Returns a const reference to the socket address.
+     */
+    const sockaddr_in& address() const;
+
+    /**
      * @brief Sets the socket address.
      *
      * @param newAddress The new socket address.
@@ -101,6 +106,15 @@ public:
     void refreshIP();
 };
 
+/**
+ * @brief Observer interface to receive ControlMachine discovery events.
+ */
+class IControlMachineObserver {
+public:
+    virtual ~IControlMachineObserver() = default;
+    virtual void onDiscovered(const ControlMachine &machine) = 0;
+};
+
 
 /**
  * @brief Arping service for discovering control machines.
@@ -129,8 +143,8 @@ class Arper
     /// Message to be sent in the ARP broadcast
     std::string arpMessage;
 
-    /// Reference to the vector of pointers to discovered control machines
-    std::vector<ControlMachine*> &controlMachineAddresses;
+    /// Observer to notify about discovered control machines
+    IControlMachineObserver &observer_;
 
     /**
      * @brief Sends a broadcast ARP message.
@@ -164,11 +178,11 @@ public:
     /**
      * @brief Constructs a new Arper object.
      *
-     * @param controlMachineAddresses Reference to the vector of ControlMachine pointers.
+     * @param observer Observer that will receive new ControlMachine events.
      * @param bcastPort Broadcast port number.
      * @param arpingPort ARP ping port number.
      */
-    Arper(std::vector<ControlMachine*> &controlMachineAddresses, int bcastPort, int arpingPort);
+    Arper(IControlMachineObserver &observer, int bcastPort, int arpingPort);
 
     /**
      * @brief Destructor for Arper.
