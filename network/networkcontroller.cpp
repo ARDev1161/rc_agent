@@ -75,6 +75,12 @@ void NetworkController::onDiscovered(const ControlMachine &machine)
 
 int NetworkController::runClient(std::string &server_address, bool tryConnectIfFailed)
 {
+    // Prevent spawning multiple client instances in parallel; existing one will keep retrying.
+    if (client_started_) {
+        return connected ? 0 : -1;
+    }
+    client_started_ = true;
+
     setConnectionState(ConnectionState::Connecting);
     clientPtr = std::make_shared<grpcClient>(
         grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials()),
@@ -116,6 +122,10 @@ int NetworkController::runClient(std::string &server_address, bool tryConnectIfF
 
 int NetworkController::runClient(bool tryConnectToUnverified)
 {
+    if (client_started_) {
+        return connected ? 0 : -1;
+    }
+
     if(controlMachineAddresses.empty())
         return -1;
 
@@ -134,16 +144,7 @@ int NetworkController::runClient(bool tryConnectToUnverified)
         std::cout << "Connecting to - " << curAddr << std::endl;
         setConnectionState(ConnectionState::Connecting);
         runClient(curAddr, true);
-
-        // Give async streams a brief moment to establish connection
-        std::this_thread::sleep_for(std::chrono::milliseconds(50));
-        if (connected || !tryConnectToUnverified) {
-            return 0;
-        }
-
-        ++attempt;
-        setConnectionState(ConnectionState::Reconnecting);
-        std::this_thread::sleep_for(reconnect_strategy_->nextDelay(attempt));
+        return 0;
     }
 
     return connected ? 0 : -1;

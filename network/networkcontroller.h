@@ -89,6 +89,9 @@ private:
     /// Strategy defining reconnection backoff.
     std::unique_ptr<ReconnectStrategy> reconnect_strategy_;
 
+    /// Guard to avoid spawning multiple clients in parallel.
+    bool client_started_{false};
+
     void setConnectionState(ConnectionState state);
 public:
     /**
