@@ -59,6 +59,7 @@ public:
      * @param baseControlMsg Pointer to a BaseControl protobuf message used for monitoring commands.
      */
     explicit BaseControlNode(Base::BaseControl *baseControlMsg);
+    ~BaseControlNode();
 
     /**
      * @brief Publishes a Twist message to a specified topic.

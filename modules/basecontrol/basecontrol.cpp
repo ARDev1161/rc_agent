@@ -9,7 +9,9 @@ namespace {
 constexpr double kVelocityEpsilon = 0.01;
 constexpr double kIdleTimeoutSeconds = 3.0;
 
-class ControlStateMachine {
+} // namespace
+
+class BaseControlNode::ControlStateMachine {
 public:
     explicit ControlStateMachine(const rclcpp::Time &start_time)
         : last_cmd_time_(start_time) {}
@@ -105,7 +107,6 @@ private:
     rclcpp::Time last_cmd_time_;
 };
 
-} // namespace
 
 BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg) :
     Node("basecontrol_monitor"),
@@ -130,6 +131,8 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg) :
         100ms,
         std::bind(&BaseControlNode::checkBaseControlUpdates, this));
 }
+
+BaseControlNode::~BaseControlNode() = default;
 
 void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& twist_msg, const std::string& topic) {
     if (topic.compare("cmd_vel") == 0) {
