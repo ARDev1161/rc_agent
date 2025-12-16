@@ -59,9 +59,16 @@ void RobotNavigator::checkNavCommand() {
         RCLCPP_ERROR(this->get_logger(), "nav_cmd_req_ is null or uninitialized!");
         return;
     }
+    if (!nav_cmd_resp_) {
+        RCLCPP_ERROR(this->get_logger(), "nav_cmd_resp_ is null!");
+        return;
+    }
 
     // If no command is set, exit
     if (nav_cmd_req_->command_case() == NavCommandRequest::COMMAND_NOT_SET) {
+        if (has_active_command_) {
+            *nav_cmd_resp_ = createNavCommandResponse(*this, last_command_);
+        }
         return;
     }
 
@@ -69,19 +76,20 @@ void RobotNavigator::checkNavCommand() {
     NavCommandRequest safeCopy;
     safeCopy.CopyFrom(*nav_cmd_req_);
 
-    // Static variable to track the previous command to avoid processing duplicates
-    static std::string prev = "";
-    std::string cur = safeCopy.DebugString();
+    // Process a new command if it's different or no active command is running
+    if (!has_active_command_ || !google::protobuf::util::MessageDifferencer::Equals(safeCopy, last_command_)) {
+        last_command_ = safeCopy;
+        has_active_command_ = true;
+        processNavCommand(last_command_, *this);
+    }
 
-    if (prev != cur) {
-        prev = cur;
-        // Process the navigation command via the command factory
-        processNavCommand(safeCopy, *this);
+    // Always publish current status/feedback while command is active
+    *nav_cmd_resp_ = createNavCommandResponse(*this, last_command_);
 
-        // Creating a response if nav_cmd_resp_ is valid and createNavCommandResponse is defined
-        if (nav_cmd_resp_) {
-            *nav_cmd_resp_ = createNavCommandResponse(*this, safeCopy);
-        }
+    // If task finished, clear active flag and request to allow the same command to be re-sent (patrol)
+    if (isTaskComplete()) {
+        has_active_command_ = false;
+        nav_cmd_req_->Clear();
     }
 }
 
@@ -135,30 +143,23 @@ void RobotNavigator::spin(double target_yaw, double time_allowance) {
 }
 
 void RobotNavigator::cancelTask() {
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        task_completed_ = true;
+    }
+    {
+        std::lock_guard<std::mutex> lock(result_mutex_);
+        result_code_ = rclcpp_action::ResultCode::CANCELED;
+    }
+
     // Cancel for navigate_to_pose
-    auto future_cancel_pose = navigate_to_pose_client_->async_cancel_all_goals();
-    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), future_cancel_pose) !=
-        rclcpp::FutureReturnCode::SUCCESS) {
-        RCLCPP_WARN(this->get_logger(), "Failed to cancel navigate_to_pose tasks.");
-    }
+    navigate_to_pose_client_->async_cancel_all_goals();
     // Cancel for navigate_through_poses
-    auto future_cancel_through = navigate_through_poses_client_->async_cancel_all_goals();
-    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), future_cancel_through) !=
-        rclcpp::FutureReturnCode::SUCCESS) {
-        RCLCPP_WARN(this->get_logger(), "Failed to cancel navigate_through_poses tasks.");
-    }
+    navigate_through_poses_client_->async_cancel_all_goals();
     // Cancel for follow_waypoints
-    auto future_cancel_waypoints = follow_waypoints_client_->async_cancel_all_goals();
-    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), future_cancel_waypoints) !=
-        rclcpp::FutureReturnCode::SUCCESS) {
-        RCLCPP_WARN(this->get_logger(), "Failed to cancel follow_waypoints tasks.");
-    }
+    follow_waypoints_client_->async_cancel_all_goals();
     // Cancel for spin
-    auto future_cancel_spin = spin_client_->async_cancel_all_goals();
-    if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), future_cancel_spin) !=
-        rclcpp::FutureReturnCode::SUCCESS) {
-        RCLCPP_WARN(this->get_logger(), "Failed to cancel spin tasks.");
-    }
+    spin_client_->async_cancel_all_goals();
     RCLCPP_INFO(this->get_logger(), "All navigation tasks have been canceled.");
 }
 
