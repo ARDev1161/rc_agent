@@ -8,8 +8,6 @@
 using namespace Navigation;
 
 void processNavCommand(const NavCommandRequest &request, RobotNavigator &navigator_node) {
-    RCLCPP_INFO(navigator_node.get_logger(), "Processing NavCommandRequest...");
-
     auto command = NavCommandFactory::create(request);
     if (!command) {
         RCLCPP_WARN(navigator_node.get_logger(), "Unknown navigation command received.");
@@ -22,31 +20,47 @@ void processNavCommand(const NavCommandRequest &request, RobotNavigator &navigat
 NavCommandResponse createNavCommandResponse(RobotNavigator &navigator_node, const NavCommandRequest &request) {
     NavCommandResponse response;
 
-    RCLCPP_INFO(navigator_node.get_logger(), "Creating NavCommandResponse...");
+    const auto statusToString = [](CommandStatus status) {
+        switch (status) {
+            case SUCCESS: return "SUCCESS";
+            case FAILURE: return "FAILURE";
+            case IN_PROGRESS: return "IN_PROGRESS";
+            case CANCELED: return "CANCELED";
+            default: return "UNKNOWN";
+        }
+    };
 
+    static CommandStatus previousStatus = IN_PROGRESS;
     if (navigator_node.isTaskComplete()) {
         auto result = navigator_node.getResult();
         switch (result) {
             case rclcpp_action::ResultCode::SUCCEEDED:
                 response.set_status(SUCCESS);
-                RCLCPP_INFO(navigator_node.get_logger(), "Navigation succeeded.");
                 break;
             case rclcpp_action::ResultCode::ABORTED:
                 response.set_status(FAILURE);
-                RCLCPP_ERROR(navigator_node.get_logger(), "Navigation aborted.");
                 break;
             case rclcpp_action::ResultCode::CANCELED:
                 response.set_status(CANCELED);
-                RCLCPP_WARN(navigator_node.get_logger(), "Navigation canceled.");
                 break;
             default:
                 response.set_status(FAILURE);
-                RCLCPP_ERROR(navigator_node.get_logger(), "Unknown result code.");
                 break;
         }
     } else {
         response.set_status(IN_PROGRESS);
-        RCLCPP_INFO(navigator_node.get_logger(), "Navigation still in progress.");
+    }
+
+    if (response.status() != previousStatus) {
+        RCLCPP_INFO(navigator_node.get_logger(),
+                    "Navigation status: %s",
+                    statusToString(static_cast<CommandStatus>(response.status())));
+        previousStatus = static_cast<CommandStatus>(response.status());
+    } else if (response.status() == IN_PROGRESS) {
+        RCLCPP_DEBUG_THROTTLE(navigator_node.get_logger(),
+                              *navigator_node.get_clock(),
+                              2000,
+                              "Navigation still in progress.");
     }
 
     if (request.request_feedback()) {
@@ -74,7 +88,7 @@ NavCommandResponse createNavCommandResponse(RobotNavigator &navigator_node, cons
             feedback->set_angular_distance_traveled(navigator_node.getSpinFeedback());
         }
     } else {
-        RCLCPP_INFO(navigator_node.get_logger(), "Feedback is not requested, skipping response feedback.");
+        RCLCPP_DEBUG(navigator_node.get_logger(), "Feedback is not requested, skipping response feedback.");
     }
 
     return response;
