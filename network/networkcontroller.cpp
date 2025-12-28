@@ -104,6 +104,30 @@ int NetworkController::runClient(std::string &server_address, bool tryConnectIfF
     );
     mapThr.detach();
 
+    std::thread poseThr([&, this]()
+     {
+        this->clientStatus = clientPtr->PoseStream();
+        if(clientStatus.ok())
+        {
+            connected = true;
+            setConnectionState(ConnectionState::Connected);
+        }
+     }
+    );
+    poseThr.detach();
+
+    std::thread zoneThr([&, this]()
+     {
+        this->clientStatus = clientPtr->ZoneStream();
+        if(clientStatus.ok())
+        {
+            connected = true;
+            setConnectionState(ConnectionState::Connected);
+        }
+     }
+    );
+    zoneThr.detach();
+
     std::thread dataThr([&, this]()
      {
         clientStatus = this->clientPtr->DataStreamExchange();

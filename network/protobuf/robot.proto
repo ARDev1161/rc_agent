@@ -56,6 +56,10 @@ service ClientOnRobot{
     rpc DataStreamExchange (stream Sensors) returns (stream Controls);
     // Map service
     rpc MapStream(stream map_service.GetMapResponse) returns (stream map_service.GetMapRequest);
+    // Pose stream
+    rpc PoseStream(stream map_service.PoseState) returns (stream map_service.PoseRequest);
+    // Zone stream
+    rpc ZoneStream(stream map_service.ZoneState) returns (stream map_service.ZoneRequest);
 }
 
 service ServerOnRobot{

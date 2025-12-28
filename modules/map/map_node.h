@@ -3,8 +3,10 @@
 
 #include <mutex>
 #include <memory>
+#include <cstdint>
 #include <rclcpp/rclcpp.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <tf2_ros/transform_listener.h>
 #include <tf2_ros/buffer.h>
 #include <geometry_msgs/msg/transform_stamped.hpp>
@@ -36,6 +38,7 @@ public:
      */
     explicit MapNode(std::shared_ptr<GetMapResponse> mapPtr,
                      std::string mapTopicName,
+                     std::string zonesTopicName,
                      std::mutex &grpc_mutex,
                      const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
 
@@ -49,6 +52,7 @@ private:
      * @param msg Shared pointer to a nav_msgs::msg::OccupancyGrid message.
      */
     void map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg);
+    void zones_callback(const std_msgs::msg::String::SharedPtr msg);
 
     /**
      * @brief Callback function for periodic TF updates.
@@ -83,9 +87,15 @@ private:
 
     /// Subscriber for nav_msgs::msg::OccupancyGrid messages
     rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr map_sub_;
+    /// Subscriber for mapannotator zone data
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr zones_sub_;
 
     /// Delay (in milliseconds) for TF update timer
     int tfUpdateDelayMs = 200;
+    /// Incremented on each incoming map update.
+    std::uint64_t map_seq_{0};
+    /// Incremented on each incoming zones update.
+    std::uint64_t zone_seq_{0};
 
     /// Shared pointer to the GetMapResponse protobuf object
     std::shared_ptr<GetMapResponse> proto_map_;

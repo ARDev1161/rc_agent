@@ -17,6 +17,14 @@ message Pose {
   float orientation_w = 7;
 }
 
+message PoseRequest {
+  // Empty
+}
+
+message PoseState {
+  Pose pose = 1;
+}
+
 // Передача OccupancyGrid
 message OccupancyGrid {
   uint32 width = 1;
@@ -30,10 +38,52 @@ message OccupancyGrid {
   string frame_id = 6;
 }
 
+message Point2D {
+  double x = 1;
+  double y = 2;
+}
+
+message ColorRGB {
+  uint32 r = 1;
+  uint32 g = 2;
+  uint32 b = 3;
+}
+
+message ZonePassage {
+  uint64 to_id = 1;
+  repeated Point2D chain_code = 2;
+}
+
+message Zone {
+  uint64 id = 1;
+  uint32 type_id = 2;
+  string name = 3;
+  string type = 4;
+  Point2D centroid = 5;
+  ColorRGB color = 6;
+  repeated Point2D chain_code = 7;
+  repeated ZonePassage passages = 8;
+}
+
+message ZoneMap {
+  repeated Zone zones = 1;
+}
+
+message ZoneRequest {
+  // Empty
+}
+
+message ZoneState {
+  ZoneMap zone_map = 1;
+}
+
 // Ответ на запрос карты
 message GetMapResponse {
   OccupancyGrid map = 1;
   Pose robotPose = 2;
+  ZoneMap zone_map = 3;
+  uint64 map_seq = 4;
+  uint64 zone_seq = 5;
 }
 
 service MapService {

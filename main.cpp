@@ -103,7 +103,8 @@ int main(int argc, char **argv)
 
   // Initialize additional nodes (commented out nodes can be enabled if needed).
 //   auto batteryStateNode = std::make_shared<BatteryStateNode>(sensorsPtr->mutable_batterystate(), "battery_state");
-  auto mapNode = std::make_shared<MapNode>(mapPtr, "/map", network->getClientInstance()->getMapMutex());
+  auto mapNode = std::make_shared<MapNode>(mapPtr, "/map", "/mapannotator/rc_agent_zones",
+                                           network->getClientInstance()->getMapMutex());
   auto baseControlNode = std::make_shared<BaseControlNode>(controlsPtr->mutable_basecontrol());
   auto navigatorNode = std::make_shared<RobotNavigator>(
     "basic_navigator_node",
