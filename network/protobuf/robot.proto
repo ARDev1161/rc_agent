@@ -9,6 +9,7 @@ import "power.proto";
 import "map.proto";
 import "navigation.proto";
 import "credentials.proto";
+import "video.proto";
 
 message Controls{
      message Light{
@@ -45,6 +46,7 @@ message Sensors{
      Power.BatteryState batteryState = 5;
      IMU.IMURawData imu = 6;
      int32 CPUTemperature = 7;
+     video.VideoStream video_stream = 8;
 }
 
 service ClientOnRobot{

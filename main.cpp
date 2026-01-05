@@ -1,7 +1,12 @@
 #include <rclcpp/rclcpp.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <geometry_msgs/msg/twist.hpp>
+#include <mutex>
 
+#include <cstdlib>
+#include <fstream>
+
+#include "config/configprocessor.h"
 #include "network/networkcontroller.h"
 #include "modules/battery/battery_state_node.h"
 #include "modules/map/map_node.h"
@@ -10,6 +15,46 @@
 
 using namespace Robot;
 using namespace std::chrono_literals;
+
+namespace {
+
+std::string loadVideoPipelineFromConfig(const std::string &config_path)
+{
+  std::ifstream file(config_path);
+  if (!file.good()) {
+    return "";
+  }
+  file.close();
+
+  ConfigProcessor config(config_path);
+  std::string src;
+  std::string coding;
+  std::string sink;
+
+  if (config.searchString("Amur.gstreamer.src", src) != EXIT_SUCCESS) {
+    return "";
+  }
+  if (config.searchString("Amur.gstreamer.coding", coding) != EXIT_SUCCESS) {
+    return "";
+  }
+  if (config.searchString("Amur.gstreamer.sink", sink) != EXIT_SUCCESS) {
+    return "";
+  }
+
+  return src + coding + sink;
+}
+
+std::string resolveVideoPipeline()
+{
+  const char *env_pipeline = std::getenv("RC_AGENT_GSTREAMER_PIPELINE");
+  if (env_pipeline && *env_pipeline != '\0') {
+    return std::string(env_pipeline);
+  }
+
+  return loadVideoPipelineFromConfig("robot.cfg");
+}
+
+}  // namespace
 
 /**
  * @brief Node that publishes the last connected IP address.
@@ -53,6 +98,42 @@ private:
   rclcpp::TimerBase::SharedPtr publish_timer_;                        ///< Timer for periodic publishing.
 };
 
+class StreamPipelineReceiver : public rclcpp::Node {
+public:
+  StreamPipelineReceiver(std::shared_ptr<Sensors> sensors)
+  : Node("stream_pipeline_receiver"),
+    sensors_(std::move(sensors))
+  {
+    pipeline_topic_ = declare_parameter<std::string>("pipeline_topic", "/gst/pipeline");
+    auto qos = rclcpp::QoS(1).transient_local().reliable();
+    sub_ = this->create_subscription<std_msgs::msg::String>(
+      pipeline_topic_,
+      qos,
+      std::bind(&StreamPipelineReceiver::onPipeline, this, std::placeholders::_1));
+  }
+
+private:
+  void onPipeline(const std_msgs::msg::String::SharedPtr msg)
+  {
+    if (!sensors_ || msg->data.empty()) {
+      return;
+    }
+
+    if (msg->data == last_pipeline_) {
+      return;
+    }
+
+    last_pipeline_ = msg->data;
+    sensors_->mutable_video_stream()->set_pipeline(last_pipeline_);
+    RCLCPP_INFO(this->get_logger(), "Updated video pipeline from %s", pipeline_topic_.c_str());
+  }
+
+  std::shared_ptr<Sensors> sensors_;
+  std::string pipeline_topic_;
+  std::string last_pipeline_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_;
+};
+
 /**
  * @brief Main function that initializes ROS 2 nodes and runs the executor.
  *
@@ -72,10 +153,21 @@ int main(int argc, char **argv)
     return 1;
   }
 
+  auto paramNode = std::make_shared<rclcpp::Node>("rc_agent");
+  const std::string param_pipeline =
+    paramNode->declare_parameter<std::string>("video_pipeline", "");
+
   // Create shared pointers for Controls, Sensors, and Map data
   auto controlsPtr = std::make_shared<Controls>();
   auto sensorsPtr = std::make_shared<Sensors>();
   auto mapPtr = std::make_shared<GetMapResponse>();
+  std::string video_pipeline = param_pipeline;
+  if (video_pipeline.empty()) {
+    video_pipeline = resolveVideoPipeline();
+  }
+  if (!video_pipeline.empty()) {
+    sensorsPtr->mutable_video_stream()->set_pipeline(video_pipeline);
+  }
 
   // Set the broadcast and arping ports
   int bcastPort = 11111;
@@ -87,6 +179,7 @@ int main(int argc, char **argv)
 
   // Create an AddressSender node that publishes the last connected IP address
   auto addressSenderNode = std::make_shared<AddressSender>(network);
+  auto pipelineReceiverNode = std::make_shared<StreamPipelineReceiver>(sensorsPtr);
 
   // Wait until the client successfully connects to the server
   while(true){
@@ -118,6 +211,7 @@ int main(int argc, char **argv)
 
   // Add the nodes to the executor
   executor.add_node(addressSenderNode);
+  executor.add_node(pipelineReceiverNode);
 //   executor.add_node(batteryStateNode);
   executor.add_node(mapNode);
   executor.add_node(baseControlNode);

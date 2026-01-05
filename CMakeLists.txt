@@ -120,6 +120,10 @@ install(TARGETS ${PROJECT_NAME}
   DESTINATION lib/${PROJECT_NAME}
 )
 
+install(DIRECTORY launch params
+  DESTINATION share/${PROJECT_NAME}
+)
+
 install(FILES README.md
         DESTINATION share/${PROJECT_NAME})
 

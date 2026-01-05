@@ -15,6 +15,9 @@ set(GENERATED_PROTO_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 
 # Recursively find all .proto files within the PROTO_DIR directory and its subdirectories
 file(GLOB_RECURSE PROTO_FILES "${PROTO_DIR}/*.proto")
+# Ensure newly added protos are included even when CMake globbing is cached.
+list(APPEND PROTO_FILES "${PROTO_DIR}/video.proto")
+list(REMOVE_DUPLICATES PROTO_FILES)
 # Create the generated directory if it doesn't exist
 #file(MAKE_DIRECTORY ${GENERATED_PROTO_DIR})
 
