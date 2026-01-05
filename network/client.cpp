@@ -1,4 +1,5 @@
 #include "client.h"
+#include <cstdint>
 
 namespace {
 
@@ -34,6 +35,17 @@ grpc::Status runStreamWithRetry(const std::string &stream_name,
     }
 
     return status;
+}
+
+bool poseEquals(const map_service::Pose &a, const map_service::Pose &b)
+{
+    return a.position_x() == b.position_x() &&
+           a.position_y() == b.position_y() &&
+           a.position_z() == b.position_z() &&
+           a.orientation_x() == b.orientation_x() &&
+           a.orientation_y() == b.orientation_y() &&
+           a.orientation_z() == b.orientation_z() &&
+           a.orientation_w() == b.orientation_w();
 }
 
 } // namespace
@@ -131,14 +143,132 @@ grpc::Status grpcClient::MapStream()
         },
         [this](grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest> &stream) {
             map_service::GetMapRequest request;
+            std::uint64_t last_seq = 0;
+            bool has_seq = false;
+            const int idle_sleep_ms = 10;
 
             while(!stoppedStream && (clientChannel->GetState(true) == 2))
             {
+                bool changed = false;
                 {
                     std::unique_lock<std::mutex> lock(muMap);
-                    stream.Write(*map_);
+                    if (map_) {
+                        std::uint64_t seq = map_->map_seq();
+                        if (!has_seq || seq != last_seq) {
+                            last_seq = seq;
+                            has_seq = true;
+                            changed = true;
+                        }
+                    }
                 }
+                if (!changed) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(idle_sleep_ms));
+                    continue;
+                }
+                {
+                    std::unique_lock<std::mutex> lock(muMap);
+                    if (map_) {
+                        stream.Write(*map_);
+                    }
+                }
+                stream.Read(&request);
+            }
+        }
+    );
+}
 
+grpc::Status grpcClient::PoseStream()
+{
+    return runStreamWithRetry<grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest>>(
+        "PoseStream",
+        stoppedStream,
+        retryDelayMilliseconds,
+        [this](grpc::ClientContext &context) {
+            std::unique_lock<std::mutex> lock(muMap);
+            if (!map_) {
+                return std::shared_ptr<grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest>>(nullptr);
+            }
+            return std::shared_ptr<grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest>>(
+                stub_->PoseStream(&context));
+        },
+        [this](grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest> &stream) {
+            map_service::PoseRequest request;
+            map_service::PoseState state;
+            map_service::Pose last_pose;
+            bool has_pose = false;
+            const int idle_sleep_ms = 10;
+
+            while(!stoppedStream && (clientChannel->GetState(true) == 2))
+            {
+                bool changed = false;
+                {
+                    std::unique_lock<std::mutex> lock(muMap);
+                    if (map_) {
+                        *state.mutable_pose() = map_->robotpose();
+                        if (!has_pose || !poseEquals(state.pose(), last_pose)) {
+                            last_pose = state.pose();
+                            has_pose = true;
+                            changed = true;
+                        }
+                    }
+                }
+                if (!changed) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(idle_sleep_ms));
+                    continue;
+                }
+                stream.Write(state);
+                stream.Read(&request);
+            }
+        }
+    );
+}
+
+grpc::Status grpcClient::ZoneStream()
+{
+    return runStreamWithRetry<grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest>>(
+        "ZoneStream",
+        stoppedStream,
+        retryDelayMilliseconds,
+        [this](grpc::ClientContext &context) {
+            std::unique_lock<std::mutex> lock(muMap);
+            if (!map_) {
+                return std::shared_ptr<grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest>>(nullptr);
+            }
+            return std::shared_ptr<grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest>>(
+                stub_->ZoneStream(&context));
+        },
+        [this](grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest> &stream) {
+            map_service::ZoneRequest request;
+            map_service::ZoneState state;
+            std::uint64_t last_seq = 0;
+            bool has_seq = false;
+            const int idle_sleep_ms = 10;
+
+            while(!stoppedStream && (clientChannel->GetState(true) == 2))
+            {
+                bool changed = false;
+                {
+                    std::unique_lock<std::mutex> lock(muMap);
+                    if (map_) {
+                        std::uint64_t seq = map_->zone_seq();
+                        if (!has_seq || seq != last_seq) {
+                            last_seq = seq;
+                            has_seq = true;
+                            changed = true;
+                        }
+                    }
+                }
+                if (!changed) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(idle_sleep_ms));
+                    continue;
+                }
+                {
+                    std::unique_lock<std::mutex> lock(muMap);
+                    if (map_) {
+                        *state.mutable_zone_map() = map_->zone_map();
+                    }
+                }
+                stream.Write(state);
                 stream.Read(&request);
             }
         }

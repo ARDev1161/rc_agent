@@ -1,0 +1,193 @@
+.TH "md_API" 3 "Fri Mar 14 2025" "Version 1.0" "Beerbot Control" \" -*- nroff -*-
+.ad l
+.nh
+.SH NAME
+md_API \- gRPC API Documentation 
+
+.SS "Overview"
+This document describes the gRPC API used in the robot system\&. The API is structured into several services, handling different aspects of robot control, such as movement, navigation, sensor data, and power management\&.
+.SS "Proto Files Structure"
+The API consists of multiple \fC\&.proto\fP files:
+.IP "\(bu" 2
+\fCrobot\&.proto\fP - Main file that imports all modules and defines core messages\&.
+.IP "\(bu" 2
+\fCbase\&.proto\fP - Defines base control messages\&.
+.IP "\(bu" 2
+\fCdrives\&.proto\fP - Defines drive-related messages\&.
+.IP "\(bu" 2
+\fCimu\&.proto\fP - Defines IMU sensor messages\&.
+.IP "\(bu" 2
+\fCpower\&.proto\fP - Defines power and battery-related messages\&.
+.IP "\(bu" 2
+\fCmap\&.proto\fP - Defines mapping and occupancy grid messages\&.
+.IP "\(bu" 2
+\fCnavigation\&.proto\fP - Defines navigation-related messages\&.
+.IP "\(bu" 2
+\fCcredentials\&.proto\fP - Defines authentication and security messages\&.
+.PP
+.SS "Messages"
+.SS "Controls"
+.PP
+.nf
+message Controls {
+    message Light {
+        uint32 ledLeftPower = 1; // 0 to 255, LED intensity for left side
+        uint32 ledRightPower = 2; // 0 to 255, LED intensity for right side
+    }
+
+    message System {
+        bool haltFlag = 1; // Flag for shutdown
+        bool restartFlag = 2; // Flag for reboot
+        string onTime = 3; // Uptime string
+    }
+
+    Drives\&.CameraServos cameraServos = 1;
+    Drives\&.WheelMotors wheelMotors = 2;
+    Drives\&.HandMotors handMotors = 3;
+    Base\&.BaseControl baseControl = 4;
+    Navigation\&.NavCommandRequest navControl = 5;
+
+    Light light = 6;
+    System system = 7;
+}
+.fi
+.PP
+.SS "Sensors"
+.PP
+.nf
+message Sensors {
+    Drives\&.WheelEncoders wheelEncoders = 1;
+    Drives\&.HandEncoders handEncoders = 2;
+    Base\&.Odometry odometry = 3;
+    Imu\&.ImuData imuData = 4;
+    Power\&.BatteryState batteryState = 5;
+    Navigation\&.NavCommandResponse navControlStatus = 6;
+}
+.fi
+.PP
+.SS "Drives"
+.PP
+.nf
+message WheelMotors {
+    float leftMotorSpeed = 1;
+    float rightMotorSpeed = 2;
+}
+
+message WheelEncoders {
+    int32 leftEncoder = 1;
+    int32 rightEncoder = 2;
+}
+
+message CameraServos {
+    float pan = 1;
+    float tilt = 2;
+}
+
+message HandMotors {
+    float gripStrength = 1;
+}
+
+message HandEncoders {
+    float gripPosition = 1;
+}
+.fi
+.PP
+.SS "Base"
+.PP
+.nf
+message BaseControl {
+    float linearVelocity = 1;
+    float angularVelocity = 2;
+}
+
+message Odometry {
+    float positionX = 1;
+    float positionY = 2;
+    float orientation = 3;
+}
+.fi
+.PP
+.SS "IMU"
+.PP
+.nf
+message ImuData {
+    float orientationX = 1;
+    float orientationY = 2;
+    float orientationZ = 3;
+    float orientationW = 4;
+    float angularVelocityX = 5;
+    float angularVelocityY = 6;
+    float angularVelocityZ = 7;
+    float linearAccelerationX = 8;
+    float linearAccelerationY = 9;
+    float linearAccelerationZ = 10;
+}
+.fi
+.PP
+.SS "Power"
+.PP
+.nf
+message BatteryState {
+    float voltage = 1;
+    float current = 2;
+    float percentage = 3;
+    bool charging = 4;
+}
+.fi
+.PP
+.SS "Navigation"
+.PP
+.nf
+message NavCommandRequest {
+    message GoToPose {
+        float x = 1;
+        float y = 2;
+        float orientation = 3;
+    }
+    GoToPose goToPose = 1;
+}
+
+message NavCommandResponse {
+    string status = 1;
+}
+.fi
+.PP
+.SS "Services"
+.SS "Robot Control Service"
+.PP
+.nf
+service ServerOnRobot {
+    rpc DataExchange (Controls) returns (Sensors);
+    rpc DataStreamExchange (stream Controls) returns (stream Sensors);
+}
+.fi
+.PP
+.PP
+.IP "\(bu" 2
+\fBSendNavigationCommand(NavCommandRequest) -> NavCommandResponse\fP - Sends navigation goals to the robot\&.
+.PP
+.SS "Navigation Service"
+.PP
+.nf
+service NavigationService {
+    rpc SendNavigationCommand (Navigation\&.NavCommandRequest) returns (Navigation\&.NavCommandResponse);
+}
+.fi
+.PP
+.PP
+.IP "\(bu" 2
+\fBSendNavigationCommand(NavCommandRequest) -> NavCommandResponse\fP - Sends navigation goals to the robot\&.
+.PP
+.SS "Mapping Service"
+.PP
+.nf
+service MapService {
+    rpc GetMap (map_service\&.GetMapRequest) returns (map_service\&.GetMapResponse);
+}
+.fi
+.PP
+.PP
+.IP "\(bu" 2
+\fBGetMap(GetMapRequest) -> GetMapResponse\fP - Retrieves the current map of the environment\&. 
+.PP
+

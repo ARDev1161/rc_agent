@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package video;
+
+message VideoStream {
+    string pipeline = 1; // GStreamer pipeline string.
+}

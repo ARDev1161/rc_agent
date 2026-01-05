@@ -15,6 +15,7 @@ find_package(Boost REQUIRED COMPONENTS system)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 find_package(geometry_msgs REQUIRED)
+find_package(nlohmann_json QUIET)
 
 find_package(rclcpp_action REQUIRED)
 find_package(action_msgs REQUIRED)
@@ -101,6 +102,11 @@ ament_target_dependencies(${PROJECT_NAME}
   lifecycle_msgs
 )
 
+if(nlohmann_json_FOUND)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE HAVE_NLOHMANN_JSON)
+  target_link_libraries(${PROJECT_NAME} nlohmann_json::nlohmann_json)
+endif()
+
 target_link_libraries(${PROJECT_NAME}
   NetworkController
   ${Boost_LIBRARIES}
@@ -112,6 +118,10 @@ endif()
 
 install(TARGETS ${PROJECT_NAME}
   DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY launch params
+  DESTINATION share/${PROJECT_NAME}
 )
 
 install(FILES README.md

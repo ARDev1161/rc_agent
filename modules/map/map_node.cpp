@@ -1,7 +1,11 @@
 #include "map_node.h"
+#ifdef HAVE_NLOHMANN_JSON
+#include <nlohmann/json.hpp>
+#endif
 
 MapNode::MapNode(std::shared_ptr<GetMapResponse> mapPtr,
                  std::string mapTopicName,
+                 std::string zonesTopicName,
                  std::mutex &grpc_mutex,
                  const rclcpp::NodeOptions & options)
     : rclcpp::Node("map_node", options),
@@ -16,27 +20,105 @@ MapNode::MapNode(std::shared_ptr<GetMapResponse> mapPtr,
         10,
         std::bind(&MapNode::map_callback, this, std::placeholders::_1)
     );
+    zones_sub_ = this->create_subscription<std_msgs::msg::String>(
+        zonesTopicName,
+        10,
+        std::bind(&MapNode::zones_callback, this, std::placeholders::_1)
+    );
 
+    tfUpdateDelayMs = this->declare_parameter("pose_update_ms", tfUpdateDelayMs);
     // Create a timer with a period defined by tfUpdateDelayMs
     timer_ = this->create_wall_timer(
         std::chrono::milliseconds(tfUpdateDelayMs),
         std::bind(&MapNode::tfUpdateCallback, this)
     );
 
-    RCLCPP_INFO(this->get_logger(), "MapNode initialized and subscribed to %s",
-                mapTopicName.c_str());
+    RCLCPP_INFO(this->get_logger(), "MapNode subscribed to %s and %s",
+                mapTopicName.c_str(), zonesTopicName.c_str());
 }
 
 void MapNode::map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
 {
     RCLCPP_DEBUG(this->get_logger(), "MapHandler received new map data");
-    fillOccupancyGridProtobuf(*proto_map_->mutable_map(), msg);
+    {
+        std::lock_guard<std::mutex> lock(grpc_mutex_);
+        fillOccupancyGridProtobuf(*proto_map_->mutable_map(), msg);
+        proto_map_->set_map_seq(++map_seq_);
+    }
+}
+
+void MapNode::zones_callback(const std_msgs::msg::String::SharedPtr msg)
+{
+    std::lock_guard<std::mutex> lock(grpc_mutex_);
+    if (!msg) {
+        proto_map_->clear_zone_map();
+        proto_map_->set_zone_seq(++zone_seq_);
+        return;
+    }
+
+#ifdef HAVE_NLOHMANN_JSON
+    try {
+        const auto json = nlohmann::json::parse(msg->data);
+        auto *zone_map = proto_map_->mutable_zone_map();
+        zone_map->clear_zones();
+
+        if (json.contains("zones") && json["zones"].is_array()) {
+            for (const auto &zone : json["zones"]) {
+                auto *proto_zone = zone_map->add_zones();
+                proto_zone->set_id(zone.value("id", 0));
+                proto_zone->set_type_id(zone.value("type_id", 0));
+                proto_zone->set_name(zone.value("name", ""));
+                proto_zone->set_type(zone.value("type", ""));
+
+                if (zone.contains("centroid")) {
+                    const auto &c = zone["centroid"];
+                    proto_zone->mutable_centroid()->set_x(c.value("x", 0.0));
+                    proto_zone->mutable_centroid()->set_y(c.value("y", 0.0));
+                }
+                if (zone.contains("color")) {
+                    const auto &c = zone["color"];
+                    proto_zone->mutable_color()->set_r(c.value("r", 0));
+                    proto_zone->mutable_color()->set_g(c.value("g", 0));
+                    proto_zone->mutable_color()->set_b(c.value("b", 0));
+                }
+                if (zone.contains("chain_code") && zone["chain_code"].is_array()) {
+                    for (const auto &pt : zone["chain_code"]) {
+                        auto *p = proto_zone->add_chain_code();
+                        p->set_x(pt.value("x", 0.0));
+                        p->set_y(pt.value("y", 0.0));
+                    }
+                }
+                if (zone.contains("passages") && zone["passages"].is_array()) {
+                    for (const auto &passage : zone["passages"]) {
+                        auto *proto_passage = proto_zone->add_passages();
+                        proto_passage->set_to_id(passage.value("to_id", 0));
+                        if (passage.contains("chain_code") && passage["chain_code"].is_array()) {
+                            for (const auto &pt : passage["chain_code"]) {
+                                auto *pp = proto_passage->add_chain_code();
+                                pp->set_x(pt.value("x", 0.0));
+                                pp->set_y(pt.value("y", 0.0));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } catch (const std::exception &e) {
+        RCLCPP_WARN(this->get_logger(), "Failed to parse zones JSON: %s", e.what());
+        proto_map_->clear_zone_map();
+    }
+#else
+    (void)msg;
+    RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                         "Zones JSON received, but nlohmann_json is not available; ignoring.");
+    proto_map_->clear_zone_map();
+#endif
+
+    proto_map_->set_zone_seq(++zone_seq_);
 }
 
 void MapNode::fillOccupancyGridProtobuf(OccupancyGrid &proto_map, const nav_msgs::msg::OccupancyGrid::SharedPtr& latest_map)
 {
-    std::lock_guard<std::mutex> lock(grpc_mutex_);
-
     if (!latest_map) {
         // Initialize proto_map with empty values
         proto_map.set_width(0);

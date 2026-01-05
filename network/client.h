@@ -38,8 +38,6 @@ class grpcClient
     bool retryConnect;
     /// Delay (in milliseconds) between connection retry attempts.
     int retryDelayMilliseconds = 1000;
-    /// Delay (in milliseconds) for sending map data.
-    int mapSendDelayMilliseconds = 42;
 
     /// Mutex to protect client data.
     std::mutex muClient;
@@ -90,6 +88,24 @@ class grpcClient
      * @return grpc::Status Status of the map streaming RPC call.
      */
     grpc::Status MapStream();
+
+    /**
+     * @brief Performs a streaming exchange for robot pose data.
+     *
+     * Continuously sends the latest robot pose and receives updates from the server.
+     *
+     * @return grpc::Status Status of the pose streaming RPC call.
+     */
+    grpc::Status PoseStream();
+
+    /**
+     * @brief Performs a streaming exchange for zone annotations.
+     *
+     * Continuously sends the latest zone map and receives updates from the server.
+     *
+     * @return grpc::Status Status of the zone streaming RPC call.
+     */
+    grpc::Status ZoneStream();
 
     /**
      * @brief Stops the current data stream.

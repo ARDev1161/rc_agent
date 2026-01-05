@@ -200,6 +200,9 @@ private:
     std::shared_ptr<NavCommandRequest> nav_cmd_req_;
     std::shared_ptr<NavCommandResponse> nav_cmd_resp_;
 
+    bool has_active_command_ {false};                       ///< Indicates if a command is currently active
+    NavCommandRequest last_command_;                        ///< Last command we started processing
+
     rclcpp::TimerBase::SharedPtr command_timer_;            ///< Timer for checking new navigation commands
 
     /**
