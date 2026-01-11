@@ -237,11 +237,14 @@ private:
   {
     const bool is_bgr = msg.encoding == sensor_msgs::image_encodings::BGR8;
     const bool is_mono = msg.encoding == sensor_msgs::image_encodings::MONO8;
-    const int src_width = static_cast<int>(msg.width);
-    const int src_height = static_cast<int>(msg.height);
+    const size_t src_bpp = is_mono ? 1 : 3;
+    const size_t src_expected_step = msg.width * src_bpp;
+    if (msg.step < src_expected_step) {
+      return msg;
+    }
 
-    int dst_width = src_width;
-    int dst_height = src_height;
+    int dst_width = static_cast<int>(msg.width);
+    int dst_height = static_cast<int>(msg.height);
     {
       std::lock_guard<std::mutex> lock(format_mutex_);
       if (target_width_ > 0) {
@@ -251,6 +254,9 @@ private:
         dst_height = target_height_;
       }
     }
+    if (dst_width <= 0 || dst_height <= 0) {
+      return msg;
+    }
 
     sensor_msgs::msg::Image out = msg;
     out.encoding = sensor_msgs::image_encodings::RGB8;
@@ -259,26 +265,55 @@ private:
     out.step = static_cast<sensor_msgs::msg::Image::_step_type>(dst_width * 3);
     out.data.resize(out.step * dst_height);
 
+    const int src_width = static_cast<int>(msg.width);
+    const int src_height = static_cast<int>(msg.height);
+    const double scale_x = (dst_width > 1 && src_width > 1)
+                             ? static_cast<double>(src_width - 1) / (dst_width - 1)
+                             : 0.0;
+    const double scale_y = (dst_height > 1 && src_height > 1)
+                             ? static_cast<double>(src_height - 1) / (dst_height - 1)
+                             : 0.0;
+
+    auto sample_rgb = [&](int sx, int sy, uint8_t *rgb) {
+      const uint8_t *row = msg.data.data() + static_cast<size_t>(sy) * msg.step;
+      const uint8_t *px = row + static_cast<size_t>(sx) * src_bpp;
+      if (is_mono) {
+        rgb[0] = px[0];
+        rgb[1] = px[0];
+        rgb[2] = px[0];
+      } else if (is_bgr) {
+        rgb[0] = px[2];
+        rgb[1] = px[1];
+        rgb[2] = px[0];
+      } else {
+        rgb[0] = px[0];
+        rgb[1] = px[1];
+        rgb[2] = px[2];
+      }
+    };
+
     for (int y = 0; y < dst_height; ++y) {
-      int src_y = (y * src_height) / std::max(1, dst_height);
-      const uint8_t *src_row = msg.data.data() + static_cast<size_t>(src_y) * msg.step;
+      double fy = scale_y * y;
+      int y0 = static_cast<int>(fy);
+      int y1 = std::min(y0 + 1, src_height - 1);
+      double wy = fy - y0;
       uint8_t *dst_row = out.data.data() + static_cast<size_t>(y) * out.step;
       for (int x = 0; x < dst_width; ++x) {
-        int src_x = (x * src_width) / std::max(1, dst_width);
-        const uint8_t *src_px = src_row + static_cast<size_t>(src_x) * (is_mono ? 1 : 3);
+        double fx = scale_x * x;
+        int x0 = static_cast<int>(fx);
+        int x1 = std::min(x0 + 1, src_width - 1);
+        double wx = fx - x0;
+        uint8_t c00[3], c01[3], c10[3], c11[3];
+        sample_rgb(x0, y0, c00);
+        sample_rgb(x1, y0, c01);
+        sample_rgb(x0, y1, c10);
+        sample_rgb(x1, y1, c11);
         uint8_t *dst_px = dst_row + static_cast<size_t>(x) * 3;
-        if (is_mono) {
-          dst_px[0] = src_px[0];
-          dst_px[1] = src_px[0];
-          dst_px[2] = src_px[0];
-        } else if (is_bgr) {
-          dst_px[0] = src_px[2];
-          dst_px[1] = src_px[1];
-          dst_px[2] = src_px[0];
-        } else {
-          dst_px[0] = src_px[0];
-          dst_px[1] = src_px[1];
-          dst_px[2] = src_px[2];
+        for (int c = 0; c < 3; ++c) {
+          double top = (1.0 - wx) * c00[c] + wx * c01[c];
+          double bot = (1.0 - wx) * c10[c] + wx * c11[c];
+          double val = (1.0 - wy) * top + wy * bot;
+          dst_px[c] = static_cast<uint8_t>(std::clamp(val, 0.0, 255.0));
         }
       }
     }
@@ -442,7 +477,7 @@ private:
 
     return src +
            " ! videoconvert ! tee name=t" +
-           " t. ! queue ! videoconvert ! videoscale"
+           " t. ! queue ! videoconvert ! videoscale method=1" +
            " ! video/x-raw,format=I420,width=" + std::to_string(width) +
            ",height=" + std::to_string(height) +
            ",framerate=" + std::to_string(fps) + "/1" +
@@ -510,7 +545,15 @@ private:
       if (active.name().empty()) {
         active = pickDefaultSource(sources);
       }
-      updateStatus(sources, active, buildFormat(video::VideoFormat()), client);
+      auto format = buildFormat(video::VideoFormat());
+      if (relay_ && active.type() == video::ROS_IMAGE_TOPIC && !active.name().empty()) {
+        relay_->updateSource(active.name());
+        relay_->updateTargetFormat(
+          static_cast<int>(format.width()),
+          static_cast<int>(format.height()),
+          format.encoding());
+      }
+      updateStatus(sources, active, format, client);
       return;
     }
 
@@ -522,12 +565,25 @@ private:
     }
 
     video::VideoFormat format = buildFormat(requested.format());
+    video::VideoFormat effective_format = format;
+    if (desired.type() == video::ROS_IMAGE_TOPIC && relay_) {
+      effective_format.set_width(default_width_);
+      effective_format.set_height(default_height_);
+      effective_format.set_encoding("rgb8");
+    }
     if (desired.name().empty()) {
-      updateStatus(sources, desired, format, client);
+      if (relay_ && desired.type() == video::ROS_IMAGE_TOPIC && !desired.name().empty()) {
+        relay_->updateSource(desired.name());
+        relay_->updateTargetFormat(
+          static_cast<int>(effective_format.width()),
+          static_cast<int>(effective_format.height()),
+          effective_format.encoding());
+      }
+      updateStatus(sources, desired, effective_format, client);
       return;
     }
 
-    if (sameSource(desired, last_source_) && sameFormat(format, last_format_)) {
+    if (sameSource(desired, last_source_) && sameFormat(effective_format, last_format_)) {
       updateStatus(sources, last_source_, last_format_, client);
       return;
     }
@@ -535,12 +591,12 @@ private:
     if (desired.type() == video::ROS_IMAGE_TOPIC && relay_) {
       relay_->updateSource(desired.name());
       relay_->updateTargetFormat(
-        static_cast<int>(format.width()),
-        static_cast<int>(format.height()),
-        format.encoding());
+        static_cast<int>(effective_format.width()),
+        static_cast<int>(effective_format.height()),
+        effective_format.encoding());
       if (using_relay_pipeline_) {
         last_source_ = desired;
-        last_format_ = format;
+        last_format_ = effective_format;
         updateStatus(sources, last_source_, last_format_, client);
         return;
       }
@@ -566,7 +622,7 @@ private:
       {rclcpp::Parameter("gscam_config", pipeline)});
 
     last_source_ = desired;
-    last_format_ = format;
+    last_format_ = effective_format;
     updateStatus(sources, last_source_, last_format_, client);
   }
 
