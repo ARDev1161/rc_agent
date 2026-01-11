@@ -127,7 +127,6 @@ def _launch_setup(context, *args, **kwargs):
         Node(
             package='rc_agent',
             executable='rc_agent',
-            name='rc_agent',
             namespace=namespace,
             output='screen',
             parameters=rc_agent_params,

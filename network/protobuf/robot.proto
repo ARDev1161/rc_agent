@@ -34,6 +34,7 @@ message Controls{
 
      Light light = 6;
      System system = 7;
+     video.VideoConfig video_config = 8;
 }
 
 message Sensors{
