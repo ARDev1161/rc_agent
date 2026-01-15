@@ -11,6 +11,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <cstring>
+#include <unordered_set>
 
 #include "config/configprocessor.h"
 #include "network/networkcontroller.h"
@@ -162,6 +163,7 @@ public:
       return;
     }
     source_topic_ = topic;
+    warned_for_source_ = false;
     subscription_.reset();
     subscription_ = create_subscription<sensor_msgs::msg::Image>(
       source_topic_,
@@ -209,6 +211,9 @@ private:
         encoding == sensor_msgs::image_encodings::YUV422_YUY2) {
       return 2;
     }
+    if (encoding == "uyvy" || encoding == "yuy2") {
+      return 2;
+    }
     return 0;
   }
 
@@ -216,10 +221,17 @@ private:
   {
     return encoding == sensor_msgs::image_encodings::RGB8 ||
            encoding == sensor_msgs::image_encodings::BGR8 ||
-           encoding == sensor_msgs::image_encodings::MONO8;
+           encoding == sensor_msgs::image_encodings::MONO8 ||
+           encoding == sensor_msgs::image_encodings::RGBA8 ||
+           encoding == sensor_msgs::image_encodings::BGRA8 ||
+           encoding == sensor_msgs::image_encodings::MONO16 ||
+           encoding == sensor_msgs::image_encodings::TYPE_16UC1 ||
+           encoding == sensor_msgs::image_encodings::YUV422 ||
+           encoding == sensor_msgs::image_encodings::YUV422_YUY2 ||
+           encoding == "uyvy" || encoding == "yuy2";
   }
 
-  static sensor_msgs::msg::Image normalizeImage(const sensor_msgs::msg::Image &msg)
+  sensor_msgs::msg::Image normalizeImage(const sensor_msgs::msg::Image &msg)
   {
     size_t bpp = bytesPerPixel(msg.encoding);
     if (bpp == 0 || msg.width == 0 || msg.height == 0) {
@@ -227,17 +239,52 @@ private:
     }
 
     if (!isSupportedEncoding(msg.encoding)) {
+      warnConversion(msg.encoding, "unsupported");
       return msg;
+    }
+
+    if (!isGscamNative(msg.encoding)) {
+      warnConversion(msg.encoding, "converting to rgb8");
     }
 
     return convertAndScale(msg);
   }
 
+  static bool isGscamNative(const std::string &encoding)
+  {
+    return encoding == sensor_msgs::image_encodings::RGB8 ||
+           encoding == sensor_msgs::image_encodings::MONO8 ||
+           encoding == sensor_msgs::image_encodings::YUV422_YUY2;
+  }
+
+  void warnConversion(const std::string &encoding, const char *reason)
+  {
+    std::lock_guard<std::mutex> lock(warn_mutex_);
+    if (warned_for_source_) {
+      return;
+    }
+    warned_for_source_ = true;
+    RCLCPP_WARN(get_logger(),
+                "Video source '%s' encoding '%s' (%s); converting to rgb8",
+                source_topic_.c_str(),
+                encoding.c_str(),
+                reason);
+  }
+
   static sensor_msgs::msg::Image convertAndScale(const sensor_msgs::msg::Image &msg)
   {
     const bool is_bgr = msg.encoding == sensor_msgs::image_encodings::BGR8;
+    const bool is_rgba = msg.encoding == sensor_msgs::image_encodings::RGBA8;
+    const bool is_bgra = msg.encoding == sensor_msgs::image_encodings::BGRA8;
     const bool is_mono = msg.encoding == sensor_msgs::image_encodings::MONO8;
+    const bool is_mono16 = msg.encoding == sensor_msgs::image_encodings::MONO16 ||
+                           msg.encoding == sensor_msgs::image_encodings::TYPE_16UC1;
+    const bool is_yuy2 = msg.encoding == sensor_msgs::image_encodings::YUV422_YUY2 ||
+                         msg.encoding == "yuy2";
+    const bool is_uyvy = msg.encoding == sensor_msgs::image_encodings::YUV422 ||
+                         msg.encoding == "uyvy";
     const size_t src_bpp = is_mono ? 1 : 3;
+    const size_t src_stride = (is_rgba || is_bgra) ? 4 : (is_mono || is_mono16 ? 1 : 3);
     const size_t src_expected_step = msg.width * src_bpp;
     if (msg.step < src_expected_step) {
       return msg;
@@ -276,15 +323,52 @@ private:
 
     auto sample_rgb = [&](int sx, int sy, uint8_t *rgb) {
       const uint8_t *row = msg.data.data() + static_cast<size_t>(sy) * msg.step;
-      const uint8_t *px = row + static_cast<size_t>(sx) * src_bpp;
+      const uint8_t *px = row + static_cast<size_t>(sx) * src_stride;
       if (is_mono) {
         rgb[0] = px[0];
         rgb[1] = px[0];
+        rgb[2] = px[0];
+      } else if (is_mono16) {
+        const uint8_t hi = px[1];
+        rgb[0] = hi;
+        rgb[1] = hi;
+        rgb[2] = hi;
+      } else if (is_rgba) {
+        rgb[0] = px[0];
+        rgb[1] = px[1];
+        rgb[2] = px[2];
+      } else if (is_bgra) {
+        rgb[0] = px[2];
+        rgb[1] = px[1];
         rgb[2] = px[0];
       } else if (is_bgr) {
         rgb[0] = px[2];
         rgb[1] = px[1];
         rgb[2] = px[0];
+      } else if (is_yuy2 || is_uyvy) {
+        const int pair = (sx / 2) * 4;
+        const uint8_t *p = row + pair;
+        uint8_t y = 0;
+        uint8_t u = 0;
+        uint8_t v = 0;
+        if (is_yuy2) {
+          y = (sx % 2 == 0) ? p[0] : p[2];
+          u = p[1];
+          v = p[3];
+        } else {
+          y = (sx % 2 == 0) ? p[1] : p[3];
+          u = p[0];
+          v = p[2];
+        }
+        const double yf = static_cast<double>(y);
+        const double uf = static_cast<double>(u) - 128.0;
+        const double vf = static_cast<double>(v) - 128.0;
+        double r = yf + 1.402 * vf;
+        double g = yf - 0.344136 * uf - 0.714136 * vf;
+        double b = yf + 1.772 * uf;
+        rgb[0] = static_cast<uint8_t>(std::clamp(r, 0.0, 255.0));
+        rgb[1] = static_cast<uint8_t>(std::clamp(g, 0.0, 255.0));
+        rgb[2] = static_cast<uint8_t>(std::clamp(b, 0.0, 255.0));
       } else {
         rgb[0] = px[0];
         rgb[1] = px[1];
@@ -329,6 +413,8 @@ private:
   static int target_width_;
   static int target_height_;
   static std::string target_encoding_;
+  std::mutex warn_mutex_;
+  bool warned_for_source_{false};
 };
 
 std::mutex VideoSourceRelay::format_mutex_;
