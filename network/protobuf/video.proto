@@ -2,6 +2,39 @@ syntax = "proto3";
 
 package video;
 
+enum VideoSourceType {
+    SOURCE_UNKNOWN = 0;
+    ROS_IMAGE_TOPIC = 1;
+    V4L2_DEVICE = 2;
+}
+
+message VideoSource {
+    VideoSourceType type = 1;
+    string name = 2;
+}
+
+message VideoFormat {
+    uint32 width = 1;
+    uint32 height = 2;
+    float fps = 3;
+    string encoding = 4;
+    uint32 bitrate_kbps = 5;
+}
+
+message VideoConfig {
+    VideoSource requested_source = 1;
+    VideoFormat format = 2;
+    bool use_widget_size = 3;
+    string pipeline_override = 4;
+}
+
+message VideoStatus {
+    repeated VideoSource sources = 1;
+    VideoSource active_source = 2;
+    VideoFormat format = 3;
+}
+
 message VideoStream {
     string pipeline = 1; // GStreamer pipeline string.
+    VideoStatus status = 2;
 }
