@@ -8,8 +8,12 @@ using namespace std::chrono_literals;
 
 namespace {
 
+/// Threshold for detecting robot movement from odometry (m/s or rad/s)
 constexpr double kVelocityEpsilon = 0.01;
+/// Timeout for transitioning to IDLE state when no movement is detected (seconds)
 constexpr double kIdleTimeoutSeconds = 3.0;
+/// Threshold for detecting changes in commanded velocity (m/s or rad/s)
+constexpr double kCommandVelocityEpsilon = 0.001;
 
 } // namespace
 
@@ -186,10 +190,14 @@ BaseControlNode::ControlStatus BaseControlNode::getBaseControlStatus() {
 }
 
 void BaseControlNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
-    actual_linear_vel_ = msg->twist.twist.linear.x;
-    actual_angular_vel_ = msg->twist.twist.angular.z;
-
     const auto now = this->now();
+
+    {
+        std::lock_guard<std::mutex> lock(status_mutex_);
+        actual_linear_vel_ = msg->twist.twist.linear.x;
+        actual_angular_vel_ = msg->twist.twist.angular.z;
+    }
+
     ControlStatus innerStatus = state_machine_->update(actual_linear_vel_, actual_angular_vel_, now);
     last_cmd_time_ = state_machine_->lastCommandTime();
 
@@ -210,9 +218,8 @@ void BaseControlNode::checkBaseControlUpdates() {
       currentVel = protoToBaseVel(*baseControlProtoMsg_);
     }
 
-    constexpr double velocity_epsilon = 0.001;
-    if (std::abs(currentVel.linear - last_cmd_linear_) > velocity_epsilon ||
-        std::abs(currentVel.angular - last_cmd_angular_) > velocity_epsilon)
+    if (std::abs(currentVel.linear - last_cmd_linear_) > kCommandVelocityEpsilon ||
+        std::abs(currentVel.angular - last_cmd_angular_) > kCommandVelocityEpsilon)
     {
         auto apply_deadzone = [this](double value) {
             return (std::abs(value) < input_deadzone_) ? 0.0 : value;

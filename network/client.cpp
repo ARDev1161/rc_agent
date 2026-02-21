@@ -1,5 +1,6 @@
 #include "client.h"
 #include <cstdint>
+#include <grpcpp/grpcpp.h>
 
 namespace {
 
@@ -59,7 +60,9 @@ grpcClient::grpcClient(std::shared_ptr<grpc::Channel> channel,
         retryConnect(tryConnectIfFailed),
         controls_(controlsPtr),
         sensors_(sensorsPtr),
-        map_(mapPtr)
+        map_(mapPtr),
+        muClient(std::make_shared<std::mutex>()),
+        muMap(std::make_shared<std::mutex>())
 {
     clientChannel = channel;
     std::cout << "Client started" << std::endl;
@@ -116,7 +119,7 @@ grpc::Status grpcClient::DataStreamExchange()
                 stub_->DataStreamExchange(&context));
         },
         [this](grpc::ClientReaderWriter<Sensors, Controls> &stream) {
-            while(!stoppedStream && (clientChannel->GetState(true) == 2))
+            while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
             {
                 std::unique_lock<std::mutex> lock(muClient);
 
@@ -147,7 +150,7 @@ grpc::Status grpcClient::MapStream()
             bool has_seq = false;
             const int idle_sleep_ms = 10;
 
-            while(!stoppedStream && (clientChannel->GetState(true) == 2))
+            while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
             {
                 bool changed = false;
                 {
@@ -198,7 +201,7 @@ grpc::Status grpcClient::PoseStream()
             bool has_pose = false;
             const int idle_sleep_ms = 10;
 
-            while(!stoppedStream && (clientChannel->GetState(true) == 2))
+            while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
             {
                 bool changed = false;
                 {
@@ -244,7 +247,7 @@ grpc::Status grpcClient::ZoneStream()
             bool has_seq = false;
             const int idle_sleep_ms = 10;
 
-            while(!stoppedStream && (clientChannel->GetState(true) == 2))
+            while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
             {
                 bool changed = false;
                 {

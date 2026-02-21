@@ -409,18 +409,13 @@ private:
   std::string source_topic_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr publisher_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr subscription_;
-  static std::mutex format_mutex_;
-  static int target_width_;
-  static int target_height_;
-  static std::string target_encoding_;
+  std::mutex format_mutex_;
+  int target_width_{0};
+  int target_height_{0};
+  std::string target_encoding_;
   std::mutex warn_mutex_;
   bool warned_for_source_{false};
 };
-
-std::mutex VideoSourceRelay::format_mutex_;
-int VideoSourceRelay::target_width_{0};
-int VideoSourceRelay::target_height_{0};
-std::string VideoSourceRelay::target_encoding_;
 
 class VideoControlNode : public rclcpp::Node {
 public:
@@ -499,8 +494,8 @@ private:
           sources.push_back(src);
         }
       }
-    } catch (const fs::filesystem_error &) {
-      // Skip device enumeration if /dev is inaccessible.
+    } catch (const fs::filesystem_error &e) {
+      RCLCPP_WARN(get_logger(), "Failed to enumerate /dev: %s", e.what());
     }
 
     return sources;
@@ -785,9 +780,9 @@ int main(int argc, char **argv)
     sensorsPtr->mutable_video_stream()->set_pipeline(video_pipeline);
   }
 
-  // Set the broadcast and arping ports
-  int bcastPort = 11111;
-  int arpingPort = 11112;
+  // Network ports from parameters
+  int bcastPort = paramNode->declare_parameter<int>("network.bcast_port", 11111);
+  int arpingPort = paramNode->declare_parameter<int>("network.arping_port", 11112);
 
   // Create a NetworkController node and start the arping service
   std::shared_ptr<NetworkController> network = std::make_shared<NetworkController>(controlsPtr, sensorsPtr, mapPtr);

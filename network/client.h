@@ -40,9 +40,9 @@ class grpcClient
     int retryDelayMilliseconds = 1000;
 
     /// Mutex to protect client data.
-    std::mutex muClient;
+    std::shared_ptr<std::mutex> muClient;
     /// Mutex to protect map data.
-    std::mutex muMap;
+    std::shared_ptr<std::mutex> muMap;
 
  public:
     /**
@@ -115,18 +115,18 @@ class grpcClient
     void stopStream();
 
     /**
-     * @brief Returns a reference to the client mutex.
+     * @brief Returns a shared pointer to the client mutex.
      *
-     * @return std::mutex& Reference to the mutex protecting client data.
+     * @return std::shared_ptr<std::mutex> Shared pointer to the mutex protecting client data.
      */
-    std::mutex& getMutex() { return muClient; }
+    std::shared_ptr<std::mutex> getMutex() { return muClient; }
 
     /**
-     * @brief Returns a reference to the map mutex.
+     * @brief Returns a shared pointer to the map mutex.
      *
-     * @return std::mutex& Reference to the mutex protecting map data.
+     * @return std::shared_ptr<std::mutex> Shared pointer to the mutex protecting map data.
      */
-    std::mutex& getMapMutex() { return muMap; }
+    std::shared_ptr<std::mutex> getMapMutex() { return muMap; }
 };
 
 #endif // GCLIENT_H

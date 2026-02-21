@@ -33,13 +33,13 @@ public:
      *
      * @param mapPtr Shared pointer to the GetMapResponse object which will be filled.
      * @param mapTopicName Name of the ROS 2 topic to subscribe to (e.g., "/map").
-     * @param grpc_mutex Reference to a mutex used for thread-safe operations on gRPC data.
+     * @param grpc_mutex Shared pointer to a mutex used for thread-safe operations on gRPC data.
      * @param options Optional rclcpp::NodeOptions for node configuration.
      */
     explicit MapNode(std::shared_ptr<GetMapResponse> mapPtr,
                      std::string mapTopicName,
                      std::string zonesTopicName,
-                     std::mutex &grpc_mutex,
+                     std::shared_ptr<std::mutex> grpc_mutex,
                      const rclcpp::NodeOptions & options = rclcpp::NodeOptions());
 
 private:
@@ -100,8 +100,8 @@ private:
     /// Shared pointer to the GetMapResponse protobuf object
     std::shared_ptr<GetMapResponse> proto_map_;
 
-    /// Reference to a mutex for protecting gRPC-related data
-    std::mutex &grpc_mutex_;
+    /// Shared pointer to a mutex for protecting gRPC-related data
+    std::shared_ptr<std::mutex> grpc_mutex_;
 
     // TF2 members:
     /// Buffer for TF2 transforms

@@ -6,7 +6,7 @@
 MapNode::MapNode(std::shared_ptr<GetMapResponse> mapPtr,
                  std::string mapTopicName,
                  std::string zonesTopicName,
-                 std::mutex &grpc_mutex,
+                 std::shared_ptr<std::mutex> grpc_mutex,
                  const rclcpp::NodeOptions & options)
     : rclcpp::Node("map_node", options),
       proto_map_(mapPtr),
