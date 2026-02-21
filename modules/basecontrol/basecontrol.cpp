@@ -1,6 +1,8 @@
 #include "basecontrol.h"
+#include <algorithm>
 #include <cmath>
 #include <chrono>
+#include <cctype>
 
 using namespace std::chrono_literals;
 
@@ -107,26 +109,49 @@ private:
     rclcpp::Time last_cmd_time_;
 };
 
-
-BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg) :
+BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &grpcMutex) :
     Node("basecontrol_monitor"),
     baseControlProtoMsg_(baseControlMsg),
+    grpc_mutex_(grpcMutex),
     state_machine_(std::make_unique<ControlStateMachine>(this->now()))
 {
-    // Subscribe to odometry messages
     odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
         "/odom", 10, std::bind(&BaseControlNode::odomCallback, this, std::placeholders::_1));
     RCLCPP_DEBUG(this->get_logger(), "Subscribed to /odom");
 
-    // Initialize publishers
-    cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel", 10);
+    cmd_vel_topic_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_topic", "/cmd_vel");
+    cmd_vel_msg_type_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_msg_type", "twist");
+    cmd_vel_frame_id_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_frame_id", "base_link");
+    input_min_ = this->declare_parameter<double>("basecontrol.input_min", -255.0);
+    input_max_ = this->declare_parameter<double>("basecontrol.input_max", 255.0);
+    max_linear_speed_ = this->declare_parameter<double>("basecontrol.max_linear_speed", 0.25);
+    max_angular_speed_ = this->declare_parameter<double>("basecontrol.max_angular_speed", 0.8);
+    input_deadzone_ = this->declare_parameter<double>("basecontrol.input_deadzone", 3.0);
+
+    std::transform(cmd_vel_msg_type_.begin(), cmd_vel_msg_type_.end(), cmd_vel_msg_type_.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    if (cmd_vel_msg_type_ == "twist_stamped") {
+        cmd_vel_stamped_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>(cmd_vel_topic_, 10);
+    } else {
+        cmd_vel_msg_type_ = "twist";
+        cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(cmd_vel_topic_, 10);
+    }
+
     cmd_vel_smoothed_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel_smoothed", 10);
     cmd_vel_unsafety_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel_nav", 10);
 
     last_cmd_time_ = this->now();
-    RCLCPP_DEBUG(this->get_logger(), "BaseControlNode initialized");
+    if (input_max_ <= input_min_) {
+        RCLCPP_WARN(this->get_logger(), "Invalid input range [%.3f, %.3f], fallback to [-255,255]", input_min_, input_max_);
+        input_min_ = -255.0;
+        input_max_ = 255.0;
+    }
 
-    // Create a timer that checks for BaseControl updates every 100 ms
+    RCLCPP_INFO(this->get_logger(), "BaseControl output: topic=%s type=%s frame_id=%s in=[%.1f..%.1f] max_lin=%.3f max_ang=%.3f deadzone=%.1f",
+                cmd_vel_topic_.c_str(), cmd_vel_msg_type_.c_str(), cmd_vel_frame_id_.c_str(),
+                input_min_, input_max_, max_linear_speed_, max_angular_speed_, input_deadzone_);
+
     update_timer_ = this->create_wall_timer(
         100ms,
         std::bind(&BaseControlNode::checkBaseControlUpdates, this));
@@ -136,7 +161,15 @@ BaseControlNode::~BaseControlNode() = default;
 
 void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& twist_msg, const std::string& topic) {
     if (topic.compare("cmd_vel") == 0) {
-        cmd_vel_pub_->publish(twist_msg);
+        if (cmd_vel_msg_type_ == "twist_stamped" && cmd_vel_stamped_pub_) {
+            geometry_msgs::msg::TwistStamped stamped;
+            stamped.header.stamp = this->now();
+            stamped.header.frame_id = cmd_vel_frame_id_;
+            stamped.twist = twist_msg;
+            cmd_vel_stamped_pub_->publish(stamped);
+        } else if (cmd_vel_pub_) {
+            cmd_vel_pub_->publish(twist_msg);
+        }
     } else if (topic.compare("cmd_vel_smoothed") == 0) {
         cmd_vel_smoothed_pub_->publish(twist_msg);
     } else if (topic.compare("cmd_vel_unsafety") == 0) {
@@ -171,27 +204,34 @@ void BaseControlNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
 }
 
 void BaseControlNode::checkBaseControlUpdates() {
-    // Get the current velocities from the protobuf message
-  BaseVel currentVel = protoToBaseVel(*baseControlProtoMsg_);
+    BaseVel currentVel;
+    {
+      std::lock_guard<std::mutex> lock(grpc_mutex_);
+      currentVel = protoToBaseVel(*baseControlProtoMsg_);
+    }
 
-    // Threshold to determine significant changes
-  constexpr double velocity_epsilon = 0.001;
-  if (std::abs(currentVel.linear - last_cmd_linear_) > velocity_epsilon ||
-      std::abs(currentVel.angular - last_cmd_angular_) > velocity_epsilon)
-  {
-    // If changes are detected, create a Twist message
-    geometry_msgs::msg::Twist twist_msg;
-    twist_msg.linear.x = currentVel.linear * speedCoeff;
-    twist_msg.angular.z = -currentVel.angular * speedCoeff;
+    constexpr double velocity_epsilon = 0.001;
+    if (std::abs(currentVel.linear - last_cmd_linear_) > velocity_epsilon ||
+        std::abs(currentVel.angular - last_cmd_angular_) > velocity_epsilon)
+    {
+        auto apply_deadzone = [this](double value) {
+            return (std::abs(value) < input_deadzone_) ? 0.0 : value;
+        };
 
-    // Publish the Twist message to the "cmd_vel" topic
-    publishToBaseControlNode(twist_msg, "cmd_vel");
+        const double range = input_max_ - input_min_;
+        const double linear_norm = std::clamp((apply_deadzone(currentVel.linear) - input_min_) / range * 2.0 - 1.0, -1.0, 1.0);
+        const double angular_norm = std::clamp((apply_deadzone(currentVel.angular) - input_min_) / range * 2.0 - 1.0, -1.0, 1.0);
 
-    // Update the last published velocities
-    last_cmd_linear_ = currentVel.linear;
-    last_cmd_angular_ = currentVel.angular;
+        geometry_msgs::msg::Twist twist_msg;
+        twist_msg.linear.x = linear_norm * max_linear_speed_;
+        twist_msg.angular.z = -angular_norm * max_angular_speed_;
 
-    RCLCPP_DEBUG(this->get_logger(), "Published updated cmd_vel: linear=%.3f angular=%.3f",
-                currentVel.linear, currentVel.angular);
-  }
+        publishToBaseControlNode(twist_msg, "cmd_vel");
+
+        last_cmd_linear_ = currentVel.linear;
+        last_cmd_angular_ = currentVel.angular;
+
+        RCLCPP_DEBUG(this->get_logger(), "Published updated cmd_vel: linear=%.3f angular=%.3f",
+                    currentVel.linear, currentVel.angular);
+    }
 }

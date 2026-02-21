@@ -818,7 +818,9 @@ int main(int argc, char **argv)
 //   auto batteryStateNode = std::make_shared<BatteryStateNode>(sensorsPtr->mutable_batterystate(), "battery_state");
   auto mapNode = std::make_shared<MapNode>(mapPtr, "/map", "/mapannotator/rc_agent_zones",
                                            network->getClientInstance()->getMapMutex());
-  auto baseControlNode = std::make_shared<BaseControlNode>(controlsPtr->mutable_basecontrol());
+  auto baseControlNode = std::make_shared<BaseControlNode>(
+    controlsPtr->mutable_basecontrol(),
+    network->getClientInstance()->getMutex());
   auto navigatorNode = std::make_shared<RobotNavigator>(
     "basic_navigator_node",
     std::shared_ptr<NavCommandRequest>(controlsPtr->mutable_navcontrol(), [](NavCommandRequest*){}),

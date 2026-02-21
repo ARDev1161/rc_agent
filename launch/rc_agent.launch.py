@@ -20,6 +20,7 @@ def _launch_setup(context, *args, **kwargs):
     rc_agent_share = get_package_share_directory('rc_agent')
     gscam_params = os.path.join(rc_agent_share, 'params', 'gscam2.yaml')
     gst_pipeline_params = os.path.join(rc_agent_share, 'params', 'gst_pipeline.yaml')
+    basecontrol_params = os.path.join(rc_agent_share, 'params', 'basecontrol.yaml')
     colcon_prefix = os.environ.get('COLCON_PREFIX_PATH', '').split(os.pathsep)[0]
     gst_bridge_path = ''
     if colcon_prefix:
@@ -117,7 +118,7 @@ def _launch_setup(context, *args, **kwargs):
         )
         selected_params = gst_pipeline_params
 
-    rc_agent_params = [{'use_sim_time': use_sim_time}]
+    rc_agent_params = [basecontrol_params, {'use_sim_time': use_sim_time}]
     if selected_params:
         rc_agent_params.insert(0, selected_params)
     if not selected_params:

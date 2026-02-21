@@ -1,0 +1,10 @@
+basecontrol_monitor:
+  ros__parameters:
+    basecontrol.cmd_vel_topic: '/cmd_vel'
+    basecontrol.cmd_vel_msg_type: 'twist_stamped'
+    basecontrol.cmd_vel_frame_id: 'base_link'
+    basecontrol.input_min: -255.0
+    basecontrol.input_max: 255.0
+    basecontrol.max_linear_speed: 0.25
+    basecontrol.max_angular_speed: 0.8
+    basecontrol.input_deadzone: 3.0
