@@ -660,7 +660,7 @@ private:
 
     std::unique_lock<std::mutex> lock;
     if (client) {
-      lock = std::unique_lock<std::mutex>(client->getMutex());
+      lock = std::unique_lock<std::mutex>(*client->getMutex());
     }
     auto status = sensors_->mutable_video_stream()->mutable_status();
     status->clear_sources();
@@ -689,7 +689,7 @@ private:
     bool has_request = false;
     {
       if (client) {
-        std::unique_lock<std::mutex> lock(client->getMutex());
+        std::unique_lock<std::mutex> lock(*client->getMutex());
         if (controls_->has_video_config()) {
           requested = controls_->video_config();
           has_request = true;
@@ -894,10 +894,10 @@ int main(int argc, char **argv)
   // Initialize additional nodes (commented out nodes can be enabled if needed).
 //   auto batteryStateNode = std::make_shared<BatteryStateNode>(sensorsPtr->mutable_batterystate(), "battery_state");
   auto mapNode = std::make_shared<MapNode>(mapPtr, "/map", "/mapannotator/rc_agent_zones",
-                                           network->getClientInstance()->getMapMutex());
+                                           *network->getClientInstance()->getMapMutex());
   auto baseControlNode = std::make_shared<BaseControlNode>(
     controlsPtr->mutable_basecontrol(),
-    network->getClientInstance()->getMutex());
+    *network->getClientInstance()->getMutex());
   auto navigatorNode = std::make_shared<RobotNavigator>(
     "basic_navigator_node",
     std::shared_ptr<NavCommandRequest>(controlsPtr->mutable_navcontrol(), [](NavCommandRequest*){}),
