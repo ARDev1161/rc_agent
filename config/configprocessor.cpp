@@ -1,4 +1,5 @@
 #include "configprocessor.h"
+#include <utility>
 
 /*!
   Constructor with custom config filename
