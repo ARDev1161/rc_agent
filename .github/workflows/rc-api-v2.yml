@@ -72,3 +72,32 @@ jobs:
         run: /tmp/rc_agent_config_tests --gtest_filter='ConfigStringList.*' --gtest_color=yes
       - name: Exercise entire legacy config test suite
         run: /tmp/rc_agent_config_tests --gtest_color=yes
+  ros2-humble-build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    container:
+      image: ros:humble-ros-base
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ROS2/Nav2, C++ and system gRPC
+        shell: bash
+        run: |
+          apt-get update
+          apt-get install -y python3-colcon-common-extensions ros-humble-nav2-msgs \
+            ros-humble-rclcpp-action ros-humble-ament-cmake-gtest ros-humble-tf2-ros \
+            ros-humble-sensor-msgs ros-humble-lifecycle-msgs ros-humble-action-msgs \
+            libboost-system-dev libconfig++-dev nlohmann-json3-dev \
+            libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+      - name: Build rc_agent with ROS2 Humble
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /opt/ros/humble/setup.bash
+          colcon build --base-paths . --packages-select rc_agent --cmake-args -DGRPC_FETCHCONTENT=OFF -DCMAKE_BUILD_TYPE=Debug --event-handlers console_direct+
+      - name: Test rc_agent with colcon
+        shell: bash
+        run: |
+          set -euo pipefail
+          source /opt/ros/humble/setup.bash
+          colcon test --base-paths . --packages-select rc_agent --event-handlers console_direct+
+          colcon test-result --verbose
