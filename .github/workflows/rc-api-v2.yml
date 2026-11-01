@@ -60,6 +60,29 @@ jobs:
           set -euo pipefail
           g++ -std=c++17 -O0 -I generated generated/*.pb.cc tests/proto_cpp_smoke.cpp -lprotobuf -pthread -o generated/protocol_smoke
           ./generated/protocol_smoke
+  grpc-client-loopback:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gRPC and Protobuf toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ pkg-config libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+      - name: Generate C++ RPC types
+        run: |
+          set -euo pipefail
+          mkdir -p generated
+          protoc --experimental_allow_proto3_optional -I network/protobuf --cpp_out=generated \
+            --grpc_out=generated --plugin=protoc-gen-grpc="$(command -v grpc_cpp_plugin)" network/protobuf/*.proto
+      - name: Build and execute actual rc_agent client against mock operator
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O0 -I. -Igenerated generated/*.pb.cc generated/*.grpc.pb.cc \
+            network/client.cpp tests/grpc_client_smoke.cpp $(pkg-config --cflags --libs grpc++ protobuf) \
+            -pthread -o generated/rc_client_transport_test
+          timeout 20s ./generated/rc_client_transport_test
+
   config-unit-tests:
     runs-on: ubuntu-22.04
     steps:
