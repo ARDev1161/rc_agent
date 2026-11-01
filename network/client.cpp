@@ -108,6 +108,8 @@ void grpcClient::stopStream()
     std::cout << "Client stopped" << std::endl;
 }
 
+// Rely on stream Write/Read status, not GetState(): new channels can be CONNECTING.
+// Gating on READY before the first write silently loses the initial snapshot.
 grpc::Status grpcClient::DataStreamExchange()
 {
     return runStreamWithRetry<grpc::ClientReaderWriter<Sensors, Controls>>(
@@ -119,7 +121,7 @@ grpc::Status grpcClient::DataStreamExchange()
                 stub_->DataStreamExchange(&context));
         },
         [this](grpc::ClientReaderWriter<Sensors, Controls> &stream) {
-            while (!stoppedStream && clientChannel->GetState(true) == GRPC_CHANNEL_READY)
+            while (!stoppedStream)
             {
                 Sensors outgoing;
                 {
@@ -163,7 +165,7 @@ grpc::Status grpcClient::MapStream()
             bool has_seq = false;
             const int idle_sleep_ms = 10;
 
-            while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
+            while (!stoppedStream)
             {
                 bool changed = false;
                 {
@@ -214,7 +216,7 @@ grpc::Status grpcClient::PoseStream()
             bool has_pose = false;
             const int idle_sleep_ms = 10;
 
-            while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
+            while (!stoppedStream)
             {
                 bool changed = false;
                 {
@@ -260,7 +262,7 @@ grpc::Status grpcClient::ZoneStream()
             bool has_seq = false;
             const int idle_sleep_ms = 10;
 
-            while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
+            while (!stoppedStream)
             {
                 bool changed = false;
                 {
