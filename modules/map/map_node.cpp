@@ -41,7 +41,7 @@ void MapNode::map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
 {
     RCLCPP_DEBUG(this->get_logger(), "MapHandler received new map data");
     {
-        std::lock_guard<std::mutex> lock(grpc_mutex_);
+        std::lock_guard<std::mutex> lock(*grpc_mutex_);
         fillOccupancyGridProtobuf(*proto_map_->mutable_map(), msg);
         proto_map_->set_map_seq(++map_seq_);
     }
@@ -49,7 +49,7 @@ void MapNode::map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
 
 void MapNode::zones_callback(const std_msgs::msg::String::SharedPtr msg)
 {
-    std::lock_guard<std::mutex> lock(grpc_mutex_);
+    std::lock_guard<std::mutex> lock(*grpc_mutex_);
     if (!msg) {
         proto_map_->clear_zone_map();
         proto_map_->set_zone_seq(++zone_seq_);
