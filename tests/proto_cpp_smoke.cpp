@@ -44,9 +44,9 @@ int main() {
 
   rc::api::v2::ChatMessage chat;
   chat.set_text("Are you there?");
-  assert(chat.has_text());
+  assert(chat.content_case() == rc::api::v2::ChatMessage::kText);
   chat.set_audio(std::string(8, '\0'));
-  assert(chat.has_audio() && !chat.has_text());
+  assert(chat.content_case() == rc::api::v2::ChatMessage::kAudio);
 
   rc::api::v2::TaskStatus stage;
   stage.set_task_id("task1");
