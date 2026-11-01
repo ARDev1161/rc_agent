@@ -85,8 +85,12 @@ int main() {
                     "Unary controls reply was not applied");
         }
 
-        auto rpc = std::async(std::launch::async, [&client]() {
-            return client.DataStreamExchange();
+        // Use a *fresh*, potentially CONNECTING channel to catch the startup
+        // race where GetState() gating previously skipped the first snapshot.
+        auto stream_channel = grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
+        grpcClient streaming_client(stream_channel, controls, sensors, map, false);
+        auto rpc = std::async(std::launch::async, [&streaming_client]() {
+            return streaming_client.DataStreamExchange();
         });
         for (int i = 0; i < 300 && !mock.received.load(); ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -95,7 +99,7 @@ int main() {
 
         // The server holds its response for this test. ROS callbacks must still
         // be able to acquire the agent's shared protobuf mutex during the wait.
-        auto mutex = client.getMutex();
+        auto mutex = streaming_client.getMutex();
         bool available = false;
         for (int i = 0; i < 40; ++i) {
             if (mutex->try_lock()) {
