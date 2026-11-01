@@ -448,3 +448,32 @@ TEST(getConfigName, setAndGet) {
 
 //    return RUN_ALL_TESTS();
 //}
+
+// rc-api-v2: validate libconfig string lists and fail without partial output.
+TEST(ConfigStringList, ReadsCapabilities) {
+  const auto path = fs::temp_directory_path() / "rc_agent_v2_capabilities_test.cfg";
+  {
+    std::ofstream out(path);
+    out << "api: { capabilities = (\\\"manual.velocity\\\", \\\"navigation.nav2\\\"); };" << std::endl;
+  }
+  ConfigProcessor config(path.string());
+  std::vector<std::string> result;
+  EXPECT_EQ(EXIT_SUCCESS, config.searchStringList("api.capabilities", result));
+  EXPECT_EQ((std::vector<std::string>{"manual.velocity", "navigation.nav2"}), result);
+  fs::remove(path);
+}
+
+TEST(ConfigStringList, RejectsNonStringWithoutPartialOutput) {
+  const auto path = fs::temp_directory_path() / "rc_agent_v2_invalid_list_test.cfg";
+  {
+    std::ofstream out(path);
+    out << "api: { capabilities = (\\\"manual.velocity\\\", 42); scalar = \\\"x\\\"; };" << std::endl;
+  }
+  ConfigProcessor config(path.string());
+  std::vector<std::string> result{"keep"};
+  EXPECT_EQ(EXIT_FAILURE, config.searchStringList("api.capabilities", result));
+  EXPECT_EQ((std::vector<std::string>{"keep"}), result);
+  EXPECT_EQ(EXIT_FAILURE, config.searchStringList("api.scalar", result));
+  EXPECT_EQ(EXIT_FAILURE, config.searchStringList("api.missing", result));
+  fs::remove(path);
+}
