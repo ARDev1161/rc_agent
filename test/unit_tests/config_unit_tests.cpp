@@ -477,3 +477,29 @@ TEST(ConfigStringList, RejectsNonStringWithoutPartialOutput) {
   EXPECT_EQ(EXIT_FAILURE, config.searchStringList("api.missing", result));
   fs::remove(path);
 }
+
+
+TEST(ConfigMalformedScalars, RejectWrongTypeWithoutAbortingAgent) {
+  const auto path = fs::temp_directory_path() / "rc_agent_v2_wrong_scalar_types.cfg";
+  {
+    std::ofstream out(path);
+    out << "Amur: { API: { robot_id = 123; display_name = true; }; };"
+           " wrong: { text = \\"not-a-number\\"; };" << std::endl;
+  }
+  ConfigProcessor config(path.string());
+  std::string name = "unchanged";
+  int number = 42;
+  float value = 1.25F;
+  bool enabled = true;
+  EXPECT_EQ(EXIT_FAILURE, config.searchString("Amur.API.robot_id", name));
+  EXPECT_EQ("unchanged", name);
+  EXPECT_EQ(EXIT_FAILURE, config.searchString("Amur.API.display_name", name));
+  EXPECT_EQ("unchanged", name);
+  EXPECT_EQ(EXIT_FAILURE, config.searchInt("wrong.text", number));
+  EXPECT_EQ(42, number);
+  EXPECT_EQ(EXIT_FAILURE, config.searchFloat("wrong.text", value));
+  EXPECT_FLOAT_EQ(1.25F, value);
+  EXPECT_EQ(EXIT_FAILURE, config.searchBool("wrong.text", enabled));
+  EXPECT_TRUE(enabled);
+  fs::remove(path);
+}
