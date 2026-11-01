@@ -44,7 +44,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p generated
-          protoc -I network/protobuf --python_out=generated --cpp_out=generated network/protobuf/*.proto
+          protoc --experimental_allow_proto3_optional -I network/protobuf --python_out=generated --cpp_out=generated network/protobuf/*.proto
       - name: Run Python wire-contract tests
         env:
           PYTHONPATH: generated
