@@ -50,7 +50,7 @@ message Sensors{
      int32 CPUTemperature = 7;
      video.VideoStream video_stream = 8;
      // Additive v2 capability announcement; old receivers ignore field 9.
-     rc.api.v2.RobotInfo robot_info = 9;
+     .rc.api.v2.RobotInfo robot_info = 9;
 }
 
 service ClientOnRobot{
