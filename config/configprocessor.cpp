@@ -228,6 +228,34 @@ int ConfigProcessor::searchBool(std::string settingName, bool &out) {
   \param[in] value Value of parameter
   \return Code of execution. Normal - 0, if file not found - 1
 */
+int ConfigProcessor::searchStringList(const std::string &settingName,
+                                      std::vector<std::string> &out) {
+  if (settingName.empty()) {
+    return EXIT_FAILURE;
+  }
+  try {
+    const libconfig::Setting &setting = config.lookup(settingName);
+    if (setting.getType() != libconfig::Setting::TypeList &&
+        setting.getType() != libconfig::Setting::TypeArray) {
+      return EXIT_FAILURE;
+    }
+    std::vector<std::string> values;
+    values.reserve(static_cast<size_t>(setting.getLength()));
+    for (int i = 0; i < setting.getLength(); ++i) {
+      if (setting[i].getType() != libconfig::Setting::TypeString) {
+        return EXIT_FAILURE;
+      }
+      values.emplace_back(static_cast<const char *>(setting[i]));
+    }
+    out = std::move(values);
+    return EXIT_SUCCESS;
+  } catch (const libconfig::SettingNotFoundException &) {
+    return EXIT_FAILURE;
+  } catch (const libconfig::SettingTypeException &) {
+    return EXIT_FAILURE;
+  }
+}
+
 int ConfigProcessor::rewriteString(std::string settingName,
                                    const std::string &value) {
   if(settingName.empty())
