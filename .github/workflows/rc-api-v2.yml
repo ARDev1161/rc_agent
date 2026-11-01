@@ -91,13 +91,17 @@ jobs:
       - name: Build rc_agent with ROS2 Humble
         shell: bash
         run: |
-          set -euo pipefail
+          set -eo pipefail
+          # ROS setup references optional unset shell variables; source before nounset.
           source /opt/ros/humble/setup.bash
+          set -u
           colcon build --base-paths . --packages-select rc_agent --cmake-args -DGRPC_FETCHCONTENT=OFF -DCMAKE_BUILD_TYPE=Debug --event-handlers console_direct+
       - name: Test rc_agent with colcon
         shell: bash
         run: |
-          set -euo pipefail
+          set -eo pipefail
+          # ROS setup references optional unset shell variables; source before nounset.
           source /opt/ros/humble/setup.bash
+          set -u
           colcon test --base-paths . --packages-select rc_agent --event-handlers console_direct+
           colcon test-result --verbose
