@@ -350,7 +350,7 @@ private:
                 reason);
   }
 
-  static sensor_msgs::msg::Image convertAndScale(const sensor_msgs::msg::Image &msg)
+  sensor_msgs::msg::Image convertAndScale(const sensor_msgs::msg::Image &msg)
   {
     const bool is_bgr = msg.encoding == sensor_msgs::image_encodings::BGR8;
     const bool is_rgba = msg.encoding == sensor_msgs::image_encodings::RGBA8;
@@ -894,7 +894,7 @@ int main(int argc, char **argv)
   // Initialize additional nodes (commented out nodes can be enabled if needed).
 //   auto batteryStateNode = std::make_shared<BatteryStateNode>(sensorsPtr->mutable_batterystate(), "battery_state");
   auto mapNode = std::make_shared<MapNode>(mapPtr, "/map", "/mapannotator/rc_agent_zones",
-                                           *network->getClientInstance()->getMapMutex());
+                                           network->getClientInstance()->getMapMutex());
   auto baseControlNode = std::make_shared<BaseControlNode>(
     controlsPtr->mutable_basecontrol(),
     *network->getClientInstance()->getMutex());
