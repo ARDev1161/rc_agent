@@ -454,7 +454,7 @@ TEST(ConfigStringList, ReadsCapabilities) {
   const auto path = fs::temp_directory_path() / "rc_agent_v2_capabilities_test.cfg";
   {
     std::ofstream out(path);
-    out << "api: { capabilities = (\\\"manual.velocity\\\", \\\"navigation.nav2\\\"); };" << std::endl;
+    out << "api: { capabilities = (\"manual.velocity\", \"navigation.nav2\"); };" << std::endl;
   }
   ConfigProcessor config(path.string());
   std::vector<std::string> result;
@@ -467,7 +467,7 @@ TEST(ConfigStringList, RejectsNonStringWithoutPartialOutput) {
   const auto path = fs::temp_directory_path() / "rc_agent_v2_invalid_list_test.cfg";
   {
     std::ofstream out(path);
-    out << "api: { capabilities = (\\\"manual.velocity\\\", 42); scalar = \\\"x\\\"; };" << std::endl;
+    out << "api: { capabilities = (\"manual.velocity\", 42); scalar = \"x\"; };" << std::endl;
   }
   ConfigProcessor config(path.string());
   std::vector<std::string> result{"keep"};
