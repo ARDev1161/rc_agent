@@ -1,0 +1,74 @@
+name: RC API v2 contracts
+
+on:
+  push:
+    branches: [feat/rc-api-v2]
+    paths:
+      - "network/protobuf/**"
+      - "tests/**"
+      - "config/**"
+      - "robot.cfg.in"
+      - ".github/workflows/rc-api-v2.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protobuf-compatibility:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout this feature branch
+        uses: actions/checkout@v4
+      - name: Checkout peer contract
+        uses: actions/checkout@v4
+        with:
+          repository: ARDev1161/AmurCore
+          ref: feat/rc-api-v2
+          path: contract-peer
+          persist-credentials: false
+      - name: Check mirrored protocol files
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp network/protobuf/rc_api_v2.proto contract-peer/network/protobuf/rc_api_v2.proto
+          cmp network/protobuf/robot.proto contract-peer/network/protobuf/robot.proto
+          echo "Mirrored protobuf contracts match"
+      - name: Install protobuf compiler + C++ library
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libprotobuf-dev python3-protobuf g++
+      - name: Generate all Protobuf C++ and Python types
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p generated
+          protoc -I network/protobuf --python_out=generated --cpp_out=generated network/protobuf/*.proto
+      - name: Run Python wire-contract tests
+        env:
+          PYTHONPATH: generated
+        run: /usr/bin/python3 -m unittest discover -s tests -p test_proto_contract.py -v
+      - name: Compile and run C++ legacy/v2 roundtrip
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O0 -I generated generated/*.pb.cc tests/proto_cpp_smoke.cpp -lprotobuf -pthread -o generated/protocol_smoke
+          ./generated/protocol_smoke
+  config-unit-tests:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install C++ config and GTest dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++ libconfig++-dev libgtest-dev
+      - name: Compile config parser and existing unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O0 -Wall -Wextra -I. config/configprocessor.cpp test/unit_tests/config_unit_tests.cpp -lconfig++ -lgtest_main -lgtest -pthread -o /tmp/rc_agent_config_tests
+      - name: Test capability parsing and malformed lists
+        run: /tmp/rc_agent_config_tests --gtest_filter='ConfigStringList.*' --gtest_color=yes
+      - name: Exercise entire legacy config test suite
+        run: /tmp/rc_agent_config_tests --gtest_color=yes
