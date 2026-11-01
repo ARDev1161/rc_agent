@@ -62,6 +62,85 @@ std::string resolveVideoPipeline()
   return loadVideoPipelineFromConfig("robot.cfg");
 }
 
+// Advertise only semantic capabilities. ROS2/gRPC endpoints remain trusted local config.
+void configureRobotInfo(Sensors &sensors, const std::string &config_path)
+{
+  ConfigProcessor config(config_path);
+  std::string robot_id;
+  if (config.searchString("Amur.API.robot_id", robot_id) != EXIT_SUCCESS ||
+      robot_id.empty()) {
+    RCLCPP_INFO(rclcpp::get_logger("rc_agent"),
+                "No Amur.API.robot_id: v2 announcement disabled (legacy mode)");
+    return;
+  }
+
+  std::vector<std::string> capabilities;
+  if (config.searchStringList("Amur.API.capabilities", capabilities) != EXIT_SUCCESS ||
+      capabilities.empty()) {
+    RCLCPP_ERROR(rclcpp::get_logger("rc_agent"),
+                 "Robot %s: Amur.API.capabilities must be a nonempty string list",
+                 robot_id.c_str());
+    return;
+  }
+
+  std::unordered_set<std::string> seen;
+  bool manual_velocity = false;
+  for (const auto &id : capabilities) {
+    if (id.empty() || !seen.insert(id).second) {
+      RCLCPP_ERROR(rclcpp::get_logger("rc_agent"),
+                   "Robot %s: empty/duplicate capability identifier", robot_id.c_str());
+      return;
+    }
+    manual_velocity |= (id == "manual.velocity");
+  }
+
+  std::vector<std::string> axes;
+  if (manual_velocity) {
+    if (config.searchStringList("Amur.API.velocity_axes", axes) != EXIT_SUCCESS ||
+        axes.empty()) {
+      RCLCPP_ERROR(rclcpp::get_logger("rc_agent"),
+                   "Robot %s: manual.velocity requires supported axes", robot_id.c_str());
+      return;
+    }
+    const std::unordered_set<std::string> allowed = {
+      "linear.x", "linear.y", "linear.z", "angular.x", "angular.y", "angular.z"
+    };
+    std::unordered_set<std::string> axis_seen;
+    for (const auto &axis : axes) {
+      if (!allowed.count(axis) || !axis_seen.insert(axis).second) {
+        RCLCPP_ERROR(rclcpp::get_logger("rc_agent"),
+                     "Robot %s: invalid or duplicate axis '%s'",
+                     robot_id.c_str(), axis.c_str());
+        return;
+      }
+    }
+  }
+
+  std::string name;
+  if (config.searchString("Amur.API.display_name", name) != EXIT_SUCCESS ||
+      name.empty()) {
+    name = robot_id;
+  }
+
+  auto *info = sensors.mutable_robot_info();
+  info->set_robot_id(robot_id);
+  info->set_display_name(name);
+  info->set_api_major(2);
+  info->set_api_minor(0);
+  for (const auto &id : capabilities) {
+    auto *capability = info->add_capabilities();
+    capability->set_id(id);
+    if (id == "manual.velocity") {
+      for (const auto &axis : axes) {
+        capability->add_velocity_axes(axis);
+      }
+    }
+  }
+  RCLCPP_INFO(rclcpp::get_logger("rc_agent"),
+              "Announcing robot %s (%zu capabilities), RC API v2",
+              robot_id.c_str(), capabilities.size());
+}
+
 }  // namespace
 
 /**
@@ -771,6 +850,9 @@ int main(int argc, char **argv)
   // Create shared pointers for Controls, Sensors, and Map data
   auto controlsPtr = std::make_shared<Controls>();
   auto sensorsPtr = std::make_shared<Sensors>();
+  const std::string robot_config_path =
+    paramNode->declare_parameter<std::string>("robot_config_path", "robot.cfg");
+  configureRobotInfo(*sensorsPtr, robot_config_path);
   auto mapPtr = std::make_shared<GetMapResponse>();
   std::string video_pipeline = param_pipeline;
   if (video_pipeline.empty()) {
