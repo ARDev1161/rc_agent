@@ -902,7 +902,7 @@ int main(int argc, char **argv)
     "basic_navigator_node",
     std::shared_ptr<NavCommandRequest>(controlsPtr->mutable_navcontrol(), [](NavCommandRequest*){}),
     std::shared_ptr<NavCommandResponse>(sensorsPtr->mutable_navcontrolstatus(), [](NavCommandResponse*){}),
-    network->getClientInstance()->getMutex()
+    *network->getClientInstance()->getMutex()
   );
 
   // Create a MultiThreadedExecutor
