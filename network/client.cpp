@@ -119,12 +119,25 @@ grpc::Status grpcClient::DataStreamExchange()
                 stub_->DataStreamExchange(&context));
         },
         [this](grpc::ClientReaderWriter<Sensors, Controls> &stream) {
-            while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
+            while (!stoppedStream && clientChannel->GetState(true) == GRPC_CHANNEL_READY)
             {
-                std::unique_lock<std::mutex> lock(*muClient);
-
-                stream.Write(*sensors_);
-                stream.Read(controls_.get());
+                Sensors outgoing;
+                {
+                    // ROS callbacks must not wait on potentially stalled network I/O.
+                    std::lock_guard<std::mutex> lock(*muClient);
+                    outgoing = *sensors_;
+                }
+                if (!stream.Write(outgoing)) {
+                    break;
+                }
+                Controls incoming;
+                if (!stream.Read(&incoming)) {
+                    break;
+                }
+                {
+                    std::lock_guard<std::mutex> lock(*muClient);
+                    *controls_ = std::move(incoming);
+                }
             }
         }
     );
