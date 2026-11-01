@@ -4,10 +4,15 @@ on:
   push:
     branches: [feat/rc-api-v2]
     paths:
-      - "network/protobuf/**"
-      - "tests/**"
-      - "config/**"
+      - "**/*.cpp"
+      - "**/*.h"
+      - "**/*.proto"
+      - "**/*.cmake"
+      - "**/CMakeLists.txt"
+      - "**/*.ui"
+      - "**/*.yaml"
       - "robot.cfg.in"
+      - "AmurCore.cfg.in"
       - ".github/workflows/rc-api-v2.yml"
   pull_request:
   workflow_dispatch:
