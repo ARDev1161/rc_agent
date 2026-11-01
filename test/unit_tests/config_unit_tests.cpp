@@ -484,7 +484,7 @@ TEST(ConfigMalformedScalars, RejectWrongTypeWithoutAbortingAgent) {
   {
     std::ofstream out(path);
     out << "Amur: { API: { robot_id = 123; display_name = true; }; };"
-           " wrong: { text = \\"not-a-number\\"; };" << std::endl;
+           " wrong: { text = \"not-a-number\"; };" << std::endl;
   }
   ConfigProcessor config(path.string());
   std::string name = "unchanged";
