@@ -85,7 +85,7 @@ grpc::Status grpcClient::DataExchange()
         // The actual RPC.
         status = stub_->DataExchange(&context, *sensors_, &reply);
 
-        std::unique_lock<std::mutex> ul(muClient);
+        std::unique_lock<std::mutex> ul(*muClient);
 
         // Act upon its status.
         if (status.ok()){
@@ -121,7 +121,7 @@ grpc::Status grpcClient::DataStreamExchange()
         [this](grpc::ClientReaderWriter<Sensors, Controls> &stream) {
             while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
             {
-                std::unique_lock<std::mutex> lock(muClient);
+                std::unique_lock<std::mutex> lock(*muClient);
 
                 stream.Write(*sensors_);
                 stream.Read(controls_.get());
@@ -137,7 +137,7 @@ grpc::Status grpcClient::MapStream()
         stoppedStream,
         retryDelayMilliseconds,
         [this](grpc::ClientContext &context) {
-            std::unique_lock<std::mutex> lock(muMap);
+            std::unique_lock<std::mutex> lock(*muMap);
             if (!map_) {
                 return std::shared_ptr<grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest>>(nullptr);
             }
@@ -154,7 +154,7 @@ grpc::Status grpcClient::MapStream()
             {
                 bool changed = false;
                 {
-                    std::unique_lock<std::mutex> lock(muMap);
+                    std::unique_lock<std::mutex> lock(*muMap);
                     if (map_) {
                         std::uint64_t seq = map_->map_seq();
                         if (!has_seq || seq != last_seq) {
@@ -169,7 +169,7 @@ grpc::Status grpcClient::MapStream()
                     continue;
                 }
                 {
-                    std::unique_lock<std::mutex> lock(muMap);
+                    std::unique_lock<std::mutex> lock(*muMap);
                     if (map_) {
                         stream.Write(*map_);
                     }
@@ -187,7 +187,7 @@ grpc::Status grpcClient::PoseStream()
         stoppedStream,
         retryDelayMilliseconds,
         [this](grpc::ClientContext &context) {
-            std::unique_lock<std::mutex> lock(muMap);
+            std::unique_lock<std::mutex> lock(*muMap);
             if (!map_) {
                 return std::shared_ptr<grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest>>(nullptr);
             }
@@ -205,7 +205,7 @@ grpc::Status grpcClient::PoseStream()
             {
                 bool changed = false;
                 {
-                    std::unique_lock<std::mutex> lock(muMap);
+                    std::unique_lock<std::mutex> lock(*muMap);
                     if (map_) {
                         *state.mutable_pose() = map_->robotpose();
                         if (!has_pose || !poseEquals(state.pose(), last_pose)) {
@@ -233,7 +233,7 @@ grpc::Status grpcClient::ZoneStream()
         stoppedStream,
         retryDelayMilliseconds,
         [this](grpc::ClientContext &context) {
-            std::unique_lock<std::mutex> lock(muMap);
+            std::unique_lock<std::mutex> lock(*muMap);
             if (!map_) {
                 return std::shared_ptr<grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest>>(nullptr);
             }
@@ -251,7 +251,7 @@ grpc::Status grpcClient::ZoneStream()
             {
                 bool changed = false;
                 {
-                    std::unique_lock<std::mutex> lock(muMap);
+                    std::unique_lock<std::mutex> lock(*muMap);
                     if (map_) {
                         std::uint64_t seq = map_->zone_seq();
                         if (!has_seq || seq != last_seq) {
@@ -266,7 +266,7 @@ grpc::Status grpcClient::ZoneStream()
                     continue;
                 }
                 {
-                    std::unique_lock<std::mutex> lock(muMap);
+                    std::unique_lock<std::mutex> lock(*muMap);
                     if (map_) {
                         *state.mutable_zone_map() = map_->zone_map();
                     }
