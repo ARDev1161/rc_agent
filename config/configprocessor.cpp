@@ -159,6 +159,9 @@ int ConfigProcessor::searchString(std::string settingName, std::string &out) {
     std::cerr << "No setting in configuration file: " << settingName
               << std::endl;
     return EXIT_FAILURE; // EXIT_FAILURE
+  } catch (const libconfig::SettingTypeException &) {
+    // Malformed robot config must fail closed, never terminate the ROS node.
+    return EXIT_FAILURE;
   }
   return (EXIT_SUCCESS);
 }
@@ -179,6 +182,9 @@ int ConfigProcessor::searchInt(std::string settingName, int &out) {
     std::cerr << "No setting in configuration file: " << settingName
               << std::endl;
     return EXIT_FAILURE; // EXIT_FAILURE
+  } catch (const libconfig::SettingTypeException &) {
+    // Malformed robot config must fail closed, never terminate the ROS node.
+    return EXIT_FAILURE;
   }
   return (EXIT_SUCCESS);
 }
@@ -199,6 +205,9 @@ int ConfigProcessor::searchFloat(std::string settingName, float &out) {
     std::cerr << "No setting in configuration file: " << settingName
               << std::endl;
     return EXIT_FAILURE; // EXIT_FAILURE
+  } catch (const libconfig::SettingTypeException &) {
+    // Malformed robot config must fail closed, never terminate the ROS node.
+    return EXIT_FAILURE;
   }
   return (EXIT_SUCCESS);
 }
@@ -219,6 +228,9 @@ int ConfigProcessor::searchBool(std::string settingName, bool &out) {
     std::cerr << "No setting in configuration file: " << settingName
               << std::endl;
     return EXIT_FAILURE; // EXIT_FAILURE
+  } catch (const libconfig::SettingTypeException &) {
+    // Malformed robot config must fail closed, never terminate the ROS node.
+    return EXIT_FAILURE;
   }
   return (EXIT_SUCCESS);
 }
