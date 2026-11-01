@@ -78,7 +78,12 @@ jobs:
       - name: Build and execute actual rc_agent client against mock operator
         run: |
           set -euo pipefail
-          g++ -std=c++17 -O0 -I. -Igenerated generated/*.pb.cc generated/*.grpc.pb.cc \
+          # *.pb.cc includes *.grpc.pb.cc: list each translation unit only once.
+          proto_sources=()
+          for file in generated/*.pb.cc; do
+            [[ "$file" == *.grpc.pb.cc ]] || proto_sources+=("$file")
+          done
+          g++ -std=c++17 -O0 -I. -Igenerated "${proto_sources[@]}" generated/*.grpc.pb.cc \
             network/client.cpp tests/grpc_client_smoke.cpp $(pkg-config --cflags --libs grpc++ protobuf) \
             -pthread -o generated/rc_client_transport_test
           timeout 20s ./generated/rc_client_transport_test
