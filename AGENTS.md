@@ -30,3 +30,7 @@ GitHub Actions workflows live in `.github/workflows/rc-api-v2.yml` in each affec
 - ros2_rknn_llm: `planner-status-regression` is *source-contract only*; without RKLLM SDK it is **NOT** a runtime ROS/LLM test.
 - robot_orchestrator: `pinned-llm-contract` checks the gitlink points to the tested feature revision and executes pinned LLM tests.
 Open each workflow run, inspect failing job logs and fix source or CI configuration. **Do not mark phase DONE or report all-green unless all required jobs complete successfully for the same current commit.** Keep Nav2/video/manual smoke tests in PLAN as manual gates; proto-only green is insufficient.
+
+
+## P1 manual gates and CI continuation
+Before P1 acceptance, follow [AmurCore's P1 manual acceptance checklist](https://github.com/ARDev1161/AmurCore/blob/feat/rc-api-v2/docs/P1_MANUAL_ACCEPTANCE.md). The loopback RPC tests, Qt offscreen test, `dev`↔v2 wire interoperability test, and ROS2/Qt build jobs are CI gates but do not substitute for physical joystick, Nav2, 2D map and GStreamer verification. Check feature-branch HEAD's CI run, not an old green commit. Never mark P1 DONE or start P2 simply because compilation passed.
