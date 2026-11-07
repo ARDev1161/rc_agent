@@ -1,0 +1,3 @@
+# Updated by the RC API v2 automation after meaningful source changes.
+# The docs workflow always checks out the current feat/rc-api-v2 HEAD.
+# Initial docs bootstrap: 2026-11-08

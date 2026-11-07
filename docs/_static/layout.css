@@ -1,0 +1,8 @@
+/* Match the responsive Furo reading area used by libaudition. */
+@media screen and (min-width: 76rem) {
+  :root { --content-width: none; }
+  .page, .page .content, .page .content .article-container { max-width: none; }
+  .page .main { min-width: 0; max-width: 100%; }
+}
+.page .content p { overflow-wrap: break-word; }
+.page .content .highlight { max-width: 100%; overflow-x: auto; }
