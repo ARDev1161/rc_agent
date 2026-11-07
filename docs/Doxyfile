@@ -23,5 +23,4 @@ DOT_IMAGE_FORMAT      = svg
 INTERACTIVE_SVG       = YES
 CALL_GRAPH            = NO
 CALLER_GRAPH          = NO
-CLASS_DIAGRAMS        = YES
 UML_LOOK              = NO
