@@ -37,3 +37,12 @@ The [current CI workflow](https://github.com/ARDev1161/rc_agent/actions/runs/424
 ### Real-peer acceptance result (CI, 2026-11-08)
 
 The cross-repository test passed on the exact source revision [`41db27715aa2e453742fb712b548b7bcdfe51dd2`](https://github.com/ARDev1161/rc_agent/commit/41db27715aa2e453742fb712b548b7bcdfe51dd2): [workflow #42432945859](https://github.com/ARDev1161/rc_agent/actions/runs/42432945859) **SUCCESS**. Both repositories now compile and run the actual workstation gRPC server with the actual gateway gRPC client in CI. This is a headless P1 transport acceptance check, **not** P1-01 through P1-08 real-robot/UI/Nav2/GStreamer acceptance; P1 remains in progress.
+
+
+## Bounded reconnection and one-shot RPC failures — 2026-11-08
+
+The P1 gateway transport now respects `tryConnectIfFailed` in legacy unary and streaming RPCs. Unary requests copy the telemetry snapshot under the ROS mutex and send it with a three-second per-attempt deadline. Failed unary replies do not overwrite prior controls; retry backoff does not hold ROS callback mutex. `NetworkController` forwards the caller's retry setting, and the stream stop flag is atomic. The new mock loopback regression exercises one-shot `UNAVAILABLE`, successful recovery from a transient failure and unlocked mutex during retries.
+
+[Source tested at **29cda7bf4a39**](https://github.com/ARDev1161/rc_agent/commit/29cda7bf4a390bb5f672feacdbcd4f70d880588a) — [CI run](https://github.com/ARDev1161/rc_agent/actions/runs/42435001800) **SUCCESS** (all five jobs, including real peer and ROS2 Humble).
+
+**Limitations:** streaming operations blocked inside a gRPC Read are not yet externally cancelable by `stopStream()`; the atomic stop flag only prevents further retries once the RPC returns. P5 teleop watchdog, lease/session and actuator safety remain out of P1.

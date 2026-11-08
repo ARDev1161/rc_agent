@@ -1,3 +1,4 @@
-# Updated P1 tested real-peer source revision
-feat/rc-api-v2 source/test SHA: 41db27715aa2e453742fb712b548b7bcdfe51dd2
-CI: https://github.com/ARDev1161/rc_agent/actions/runs/42432945859
+# P1 transport disconnection hardening
+feat/rc-api-v2 source commit 29cda7bf4a390bb5f672feacdbcd4f70d880588a
+peer source commit 956f2b970885c65664067f8a5a84eea2dc080a91
+CI: https://github.com/ARDev1161/rc_agent/actions/runs/42435001800
