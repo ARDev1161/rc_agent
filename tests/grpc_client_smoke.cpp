@@ -19,6 +19,7 @@ void require(bool good, const char *message) {
 class OperatorMock final : public Robot::ClientOnRobot::Service {
 public:
     std::atomic<bool> received{false};
+    std::atomic<unsigned> stream_count{0};
     std::atomic<bool> fail_next_unary{false};
     std::atomic<bool> fail_next_stream{false};
     std::atomic<unsigned> unary_count{0};
@@ -72,6 +73,7 @@ public:
         }
         capture(incoming);
         received = true;
+        ++stream_count;
         while (!release_reply.load() && !ctx->IsCancelled()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
@@ -250,6 +252,38 @@ int main() {
         require(cancellable.DataStreamExchange().error_code() ==
                     grpc::StatusCode::CANCELLED,
                 "Stopped client restarted a stream");
+
+        // stopStream must cancel every in-flight context, not only the most
+        // recently registered stream. Two calls share one client instance.
+        mock.release_reply.store(false);
+        const unsigned streams_before = mock.stream_count.load();
+        grpcClient multi_stream(channel, controls, sensors, map, true);
+        auto first = std::async(std::launch::async, [&multi_stream]() {
+            return multi_stream.DataStreamExchange();
+        });
+        auto second = std::async(std::launch::async, [&multi_stream]() {
+            return multi_stream.DataStreamExchange();
+        });
+        for (int i = 0; i < 300 &&
+             mock.stream_count.load() < streams_before + 2; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool both_started = mock.stream_count.load() == streams_before + 2;
+        multi_stream.stopStream();
+        multi_stream.stopStream(); // repeated shutdown is safe
+        const bool both_finished =
+            first.wait_for(std::chrono::seconds(3)) == std::future_status::ready &&
+            second.wait_for(std::chrono::seconds(3)) == std::future_status::ready;
+        require(both_started, "Concurrent streams did not reach operator");
+        require(both_finished, "stopStream did not cancel both active contexts");
+        require(first.get().error_code() == grpc::StatusCode::CANCELLED &&
+                    second.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Concurrent stream cancellation returned wrong status");
+        {
+            std::lock_guard<std::mutex> lock(*multi_stream.getMutex());
+            require(controls->basecontrol().linearvelocity() == 11.0,
+                    "Concurrent cancellation changed valid controls");
+        }
 
         // The streaming transport must obey the same one-shot policy.
         mock.fail_next_stream = true;
