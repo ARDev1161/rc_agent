@@ -5,6 +5,9 @@ on:
     branches: [feat/rc-api-v2]
     paths:
       - "**/*.cpp"
+      - "**/*.py"
+      - "**/*.sh"
+      - "**/*.cc"
       - "**/*.h"
       - "**/*.proto"
       - "**/*.cmake"
