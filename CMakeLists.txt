@@ -11,6 +11,7 @@ include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -50,6 +51,11 @@ set(CONFIG_PROCESSOR
     config/configprocessor.cpp
    )
 
+set(VIDEO_SOURCES
+    modules/video/stream_pipeline_receiver.h
+    modules/video/stream_pipeline_receiver.cpp
+)
+
 set(BATTERY_SOURCES
     modules/battery/battery_state_adapter.h
     modules/battery/battery_state_handler.h
@@ -78,6 +84,7 @@ set(MAP_SOURCES
 )
 
 set(MODULES
+    ${VIDEO_SOURCES}
     ${BATTERY_SOURCES}
     ${MAP_SOURCES}
     ${NAVIGATOR_SOURCES}
@@ -101,11 +108,22 @@ if(BUILD_TESTING)
     ament_target_dependencies(battery_freshness_test rclcpp sensor_msgs)
     target_link_libraries(battery_freshness_test RobotProtos)
   endif()
+
+  ament_add_gtest(video_pipeline_snapshot_test
+    test/unit_tests/video_pipeline_snapshot_test.cpp
+    modules/video/stream_pipeline_receiver.cpp
+  )
+  if(TARGET video_pipeline_snapshot_test)
+    target_include_directories(video_pipeline_snapshot_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    ament_target_dependencies(video_pipeline_snapshot_test rclcpp std_msgs)
+    target_link_libraries(video_pipeline_snapshot_test RobotProtos)
+  endif()
 endif()
 
 ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   sensor_msgs
+  std_msgs
   rclcpp_action
   geometry_msgs
   tf2

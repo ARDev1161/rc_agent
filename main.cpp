@@ -16,6 +16,7 @@
 #include "config/configprocessor.h"
 #include "network/networkcontroller.h"
 #include "modules/battery/battery_state_node.h"
+#include "modules/video/stream_pipeline_receiver.h"
 #include "modules/map/map_node.h"
 #include "modules/basecontrol/basecontrol.h"
 #include "modules/nav2/robot_navigator.h"
@@ -185,41 +186,6 @@ private:
   rclcpp::TimerBase::SharedPtr publish_timer_;                        ///< Timer for periodic publishing.
 };
 
-class StreamPipelineReceiver : public rclcpp::Node {
-public:
-  StreamPipelineReceiver(std::shared_ptr<Sensors> sensors)
-  : Node("stream_pipeline_receiver"),
-    sensors_(std::move(sensors))
-  {
-    pipeline_topic_ = declare_parameter<std::string>("pipeline_topic", "/gst/pipeline");
-    auto qos = rclcpp::QoS(1).transient_local().reliable();
-    sub_ = this->create_subscription<std_msgs::msg::String>(
-      pipeline_topic_,
-      qos,
-      std::bind(&StreamPipelineReceiver::onPipeline, this, std::placeholders::_1));
-  }
-
-private:
-  void onPipeline(const std_msgs::msg::String::SharedPtr msg)
-  {
-    if (!sensors_ || msg->data.empty()) {
-      return;
-    }
-
-    if (msg->data == last_pipeline_) {
-      return;
-    }
-
-    last_pipeline_ = msg->data;
-    sensors_->mutable_video_stream()->set_pipeline(last_pipeline_);
-    RCLCPP_INFO(this->get_logger(), "Updated video pipeline from %s", pipeline_topic_.c_str());
-  }
-
-  std::shared_ptr<Sensors> sensors_;
-  std::string pipeline_topic_;
-  std::string last_pipeline_;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_;
-};
 
 class VideoSourceRelay : public rclcpp::Node {
 public:
@@ -872,7 +838,6 @@ int main(int argc, char **argv)
 
   // Create an AddressSender node that publishes the last connected IP address
   auto addressSenderNode = std::make_shared<AddressSender>(network);
-  auto pipelineReceiverNode = std::make_shared<StreamPipelineReceiver>(sensorsPtr);
   auto relayNode = std::make_shared<VideoSourceRelay>("/rc_agent/video_source");
   auto videoControlNode = std::make_shared<VideoControlNode>(
     controlsPtr, sensorsPtr, network, relayNode);
@@ -890,6 +855,10 @@ int main(int argc, char **argv)
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Wait 10 milliseconds
   }
+
+  // ROS video telemetry and gRPC snapshots must use one shared Sensors mutex.
+  auto pipelineReceiverNode = std::make_shared<StreamPipelineReceiver>(
+    sensorsPtr, network->getClientInstance()->getMutex());
 
   // Battery telemetry is optional. A missing/empty libconfig topic means no
   // subscriber and no fabricated battery snapshot in the legacy Sensors wire.
