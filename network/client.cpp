@@ -201,6 +201,10 @@ grpc::Status grpcClient::DataStreamExchange()
                 }
                 {
                     std::lock_guard<std::mutex> lock(*muClient);
+                    // A late reply must not revive controls after shutdown.
+                    if (stoppedStream.load()) {
+                        break;
+                    }
                     *controls_ = std::move(incoming);
                 }
             }
