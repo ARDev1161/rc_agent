@@ -20,12 +20,33 @@ class OperatorMock final : public Robot::ClientOnRobot::Service {
 public:
     std::atomic<bool> received{false};
     std::atomic<bool> release_reply{false};
+    std::mutex observed_mutex;
     std::string observed_robot_id;
+    std::string observed_capability;
+    std::string observed_axis;
+
+    void capture(const Robot::Sensors &incoming) {
+        std::lock_guard<std::mutex> lock(observed_mutex);
+        capture(incoming);
+        if (incoming.robot_info().capabilities_size() > 0) {
+            const auto &cap = incoming.robot_info().capabilities(0);
+            observed_capability = cap.id();
+            if (cap.velocity_axes_size() > 0) {
+                observed_axis = cap.velocity_axes(0);
+            }
+        }
+    }
+    bool matchesDescriptor() {
+        std::lock_guard<std::mutex> lock(observed_mutex);
+        return observed_robot_id == "robot-test" &&
+               observed_capability == "manual.velocity" &&
+               observed_axis == "linear.x";
+    }
 
     grpc::Status DataExchange(grpc::ServerContext *,
                               const Robot::Sensors *incoming,
                               Robot::Controls *reply) override {
-        observed_robot_id = incoming->robot_info().robot_id();
+        capture(*incoming);
         reply->mutable_basecontrol()->set_linearvelocity(11.0);
         return grpc::Status::OK;
     }
@@ -73,11 +94,14 @@ int main() {
     auto map = std::make_shared<map_service::GetMapResponse>();
     sensors->mutable_robot_info()->set_robot_id("robot-test");
     sensors->mutable_robot_info()->set_api_major(2);
+    auto *cap = sensors->mutable_robot_info()->add_capabilities();
+    cap->set_id("manual.velocity");
+    cap->add_velocity_axes("linear.x");
     grpcClient client(channel, controls, sensors, map, false);
 
     try {
         require(client.DataExchange().ok(), "Legacy-compatible unary RPC failed");
-        require(mock.observed_robot_id == "robot-test", "RobotInfo was not delivered");
+        require(mock.matchesDescriptor(), "RobotInfo was not delivered");
         {
             auto mutex = client.getMutex();
             std::lock_guard<std::mutex> lock(*mutex);
@@ -114,7 +138,7 @@ int main() {
                 "Client stream did not finish after server sent reply");
         require(rpc.get().ok(), "Client stream RPC failed");
         require(available, "ROS mutex blocked by gRPC response wait");
-        require(mock.observed_robot_id == "robot-test", "Stream lost robot ID");
+        require(mock.matchesDescriptor(), "Stream lost robot ID");
         {
             std::lock_guard<std::mutex> lock(*mutex);
             require(controls->basecontrol().linearvelocity() == 11.0,
