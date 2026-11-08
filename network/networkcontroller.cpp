@@ -86,7 +86,8 @@ int NetworkController::runClient(std::string &server_address, bool tryConnectIfF
         grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials()),
         controls_,
         sensors_,
-        map_
+        map_,
+        tryConnectIfFailed
     );
 
     size_t pos = server_address.find(':');

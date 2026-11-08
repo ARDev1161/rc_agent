@@ -6,8 +6,9 @@ namespace {
 
 template<typename StreamT, typename FactoryFn, typename PumpFn>
 grpc::Status runStreamWithRetry(const std::string &stream_name,
-                                bool &stopped_flag,
+                                std::atomic<bool> &stopped_flag,
                                 int retry_delay_ms,
+                                bool retry_enabled,
                                 FactoryFn &&stream_factory,
                                 PumpFn &&pump_loop)
 {
@@ -15,7 +16,7 @@ grpc::Status runStreamWithRetry(const std::string &stream_name,
     bool retry = true;
     stopped_flag = false;
 
-    while (retry) {
+    while (retry && !stopped_flag.load()) {
         grpc::ClientContext context;
         auto stream = stream_factory(context);
         if (!stream) {
@@ -31,6 +32,9 @@ grpc::Status runStreamWithRetry(const std::string &stream_name,
         } else {
             std::cout << "Error " << status.error_code() << " : " << status.error_message() << std::endl;
             std::cout << stream_name << " rpc failed." << std::endl;
+            if (!retry_enabled || stopped_flag.load()) {
+                break;
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms));
         }
     }
@@ -71,35 +75,28 @@ grpcClient::grpcClient(std::shared_ptr<grpc::Channel> channel,
 // Assembles the client's payload, sends it and presents the response back from the server.
 grpc::Status grpcClient::DataExchange()
 {
-    grpc::Status status;
-    bool retry = true; // Flag that defined need connection retry or no
-
-    while(retry){
-        // Container for the data we expect from the server.
+    for (;;) {
+        Sensors snapshot;
+        {
+            std::lock_guard<std::mutex> lock(*muClient);
+            snapshot = *sensors_;
+        }
+        // Bound each attempt and never hold ROS callback mutex across I/O.
         Controls reply;
-
-        // Context for the client. It could be used to convey extra information to
-        // the server and/or tweak certain RPC behaviors.
         grpc::ClientContext context;
-
-        // The actual RPC.
-        status = stub_->DataExchange(&context, *sensors_, &reply);
-
-        std::unique_lock<std::mutex> ul(*muClient);
-
-        // Act upon its status.
-        if (status.ok()){
-          *controls_ = reply;
-          retry = false;
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        grpc::Status status = stub_->DataExchange(&context, snapshot, &reply);
+        if (status.ok()) {
+            std::lock_guard<std::mutex> lock(*muClient);
+            *controls_ = std::move(reply);
+            return status;
         }
-        else{
-          std::cout << "DataExchange rpc failed!" << std::endl;
-          std::this_thread::sleep_for(std::chrono::milliseconds( retryDelayMilliseconds ));
+        std::cout << "DataExchange rpc failed: " << status.error_message() << std::endl;
+        if (!retryConnect) {
+            return status;
         }
-
+        std::this_thread::sleep_for(std::chrono::milliseconds(retryDelayMilliseconds));
     }
-
-    return status;
 }
 
 void grpcClient::stopStream()
@@ -116,6 +113,7 @@ grpc::Status grpcClient::DataStreamExchange()
         "DataStreamExchange",
         stoppedStream,
         retryDelayMilliseconds,
+        retryConnect,
         [this](grpc::ClientContext &context) {
             return std::shared_ptr<grpc::ClientReaderWriter<Sensors, Controls>>(
                 stub_->DataStreamExchange(&context));
@@ -151,6 +149,7 @@ grpc::Status grpcClient::MapStream()
         "MapStream",
         stoppedStream,
         retryDelayMilliseconds,
+        retryConnect,
         [this](grpc::ClientContext &context) {
             std::unique_lock<std::mutex> lock(*muMap);
             if (!map_) {
@@ -201,6 +200,7 @@ grpc::Status grpcClient::PoseStream()
         "PoseStream",
         stoppedStream,
         retryDelayMilliseconds,
+        retryConnect,
         [this](grpc::ClientContext &context) {
             std::unique_lock<std::mutex> lock(*muMap);
             if (!map_) {
@@ -247,6 +247,7 @@ grpc::Status grpcClient::ZoneStream()
         "ZoneStream",
         stoppedStream,
         retryDelayMilliseconds,
+        retryConnect,
         [this](grpc::ClientContext &context) {
             std::unique_lock<std::mutex> lock(*muMap);
             if (!map_) {

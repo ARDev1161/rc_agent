@@ -1,6 +1,7 @@
 #ifndef GCLIENT_H
 #define GCLIENT_H
 
+#include <atomic>
 #include <iostream>
 #include <thread>
 #include <chrono>
@@ -33,7 +34,7 @@ class grpcClient
     std::shared_ptr<map_service::GetMapResponse> map_;
 
     /// Flag indicating whether the streaming has been stopped.
-    bool stoppedStream = true;
+    std::atomic<bool> stoppedStream{true};
     /// Flag to indicate whether to retry connection if it fails.
     bool retryConnect;
     /// Delay (in milliseconds) between connection retry attempts.

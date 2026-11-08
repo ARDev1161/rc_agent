@@ -181,3 +181,9 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - Paired real peer source/CI revision `8da7cc1303fb7e6687e7f889792bc260d771a309`. New integration job verifies legacy controls, v2 robot capabilities/axes over the unchanged RPC, legacy-after-v2 clearing, fresh-channel reconnect and nonblocking sensor callbacks. Initial CI attempts exposed build-time header-name collisions and were corrected explicitly; no production code or proto changed.
 - Updated documentation in the separate documentation branch: [Pages run #42432873508](https://github.com/ARDev1161/rc_agent/actions/runs/42432873508) SUCCESS. Documentation will refresh its displayed source revision to this tested source SHA.
 - **Acceptance**: P1 remains IN PROGRESS. These are headless in-process loopback tests, not hardware/VPN/real joystick/Nav2/map/GStreamer acceptance. Execute P1-01 through P1-08 and capture actual results before starting P2. No merges to dev/master.
+
+
+## P1 gRPC retry/liveness hardening — 2026-11-08
+- The unary transport previously retried even with tryConnectIfFailed=false, slept while holding the ROS sensor/control mutex, and had no per-attempt deadline. Updated network/client.cpp to snapshot telemetry under mutex, bound each unary attempt to 3s, return gRPC failures immediately when retries disabled, and only update controls on success; network I/O/backoff now runs outside mutex.
+- Four legacy streaming RPC methods now respect the constructor retry policy after a failed stream; stoppedStream is atomic for cross-thread access. NetworkController forwards the provided tryConnectIfFailed argument instead of ignoring it.
+- P1 only: no protobuf or actuator path changes. This does not implement stream cancellation while blocked in gRPC Read (still a separate lifecycle concern), nor P5 safe velocity lease/deadman. CI PENDING; no hardware/VPN/Nav2/map/video acceptance. P1 remains IN PROGRESS.
