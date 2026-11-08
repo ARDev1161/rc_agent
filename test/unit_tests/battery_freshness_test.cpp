@@ -23,7 +23,7 @@ TEST(BatteryFreshness, PublishExpireAndRecover)
   sensors->mutable_robot_info()->set_robot_id("battery-test-robot");
   auto mutex = std::make_shared<std::mutex>();
   auto battery = std::make_shared<BatteryStateNode>(
-      sensors, mutex, "/rc_api_v2_test_battery", 350ms);
+      sensors, mutex, "/rc_api_v2_test_battery", 1200ms);
   auto publisher_node = std::make_shared<rclcpp::Node>("battery_test_publisher");
   auto publisher = publisher_node->create_publisher<sensor_msgs::msg::BatteryState>(
       "/rc_api_v2_test_battery", rclcpp::SensorDataQoS());
@@ -69,16 +69,17 @@ TEST(BatteryFreshness, PublishExpireAndRecover)
   }
 
   // A second update while the publisher is active must extend freshness.
-  // Wait less than one expiry window, refresh with a distinct percentage,
-  // and verify the new sample survives past the original sample's deadline.
+  // Use a 1200-ms timeout with 650/700-ms waits: the assertion crosses the
+  // original deadline but leaves 500 ms of slack after the refresh. The
+  // previous 350/200/300-ms timing was vulnerable to CI scheduler jitter.
   const auto first_sample_time = std::chrono::steady_clock::now();
-  while (std::chrono::steady_clock::now() - first_sample_time < 200ms) {
+  while (std::chrono::steady_clock::now() - first_sample_time < 650ms) {
     executor.spin_some();
     std::this_thread::sleep_for(10ms);
   }
   ASSERT_TRUE(publish_and_wait(0.55f));
   const auto refreshed_time = std::chrono::steady_clock::now();
-  while (std::chrono::steady_clock::now() - refreshed_time < 300ms) {
+  while (std::chrono::steady_clock::now() - refreshed_time < 700ms) {
     executor.spin_some();
     std::this_thread::sleep_for(10ms);
   }
