@@ -138,6 +138,28 @@ TEST(BatteryFreshness, PublishExpireAndRecover)
     EXPECT_FLOAT_EQ(sensors->batterystate().percentage(), 0.33f);
   }
 
+  // A publisher may explicitly remove its battery. Clear it immediately,
+  // without waiting for the freshness timeout, and keep robot identity.
+  {
+    sensor_msgs::msg::BatteryState absent;
+    absent.present = false;
+    auto absent_deadline = std::chrono::steady_clock::now() + 3s;
+    bool cleared = false;
+    while (std::chrono::steady_clock::now() < absent_deadline) {
+      publisher->publish(absent);
+      executor.spin_some();
+      {
+        std::lock_guard<std::mutex> lock(*mutex);
+        cleared = !sensors->has_batterystate();
+        EXPECT_EQ(sensors->robot_info().robot_id(), "battery-test-robot");
+      }
+      if (cleared) break;
+      std::this_thread::sleep_for(20ms);
+    }
+    ASSERT_TRUE(cleared);
+  }
+  ASSERT_TRUE(publish_and_wait(0.33f));
+
   // A new sample resets the expiration window: it must not disappear on
   // the timer tick that would have expired the previous 42% sample.
   const auto early_deadline = std::chrono::steady_clock::now() + 150ms;
