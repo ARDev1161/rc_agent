@@ -19,6 +19,8 @@ TEST(BatteryFreshness, PublishExpireAndRecover)
     ~ShutdownGuard() { if (rclcpp::ok()) rclcpp::shutdown(); }
   } shutdown_guard;
   auto sensors = std::make_shared<Robot::Sensors>();
+  // Battery timeout must not erase unrelated robot identity/capabilities.
+  sensors->mutable_robot_info()->set_robot_id("battery-test-robot");
   auto mutex = std::make_shared<std::mutex>();
   auto battery = std::make_shared<BatteryStateNode>(
       sensors, mutex, "/rc_api_v2_test_battery", 350ms);
@@ -100,6 +102,10 @@ TEST(BatteryFreshness, PublishExpireAndRecover)
     std::this_thread::sleep_for(20ms);
   }
   EXPECT_TRUE(expired);
+  {
+    std::lock_guard<std::mutex> lock(*mutex);
+    EXPECT_EQ(sensors->robot_info().robot_id(), "battery-test-robot");
+  }
   ASSERT_TRUE(publish_and_wait(0.76f));
   {
     std::lock_guard<std::mutex> lock(*mutex);
@@ -121,6 +127,10 @@ TEST(BatteryFreshness, PublishExpireAndRecover)
     std::this_thread::sleep_for(20ms);
   }
   EXPECT_TRUE(second_expired);
+  {
+    std::lock_guard<std::mutex> lock(*mutex);
+    EXPECT_EQ(sensors->robot_info().robot_id(), "battery-test-robot");
+  }
   ASSERT_TRUE(publish_and_wait(0.33f));
   {
     std::lock_guard<std::mutex> lock(*mutex);
