@@ -62,3 +62,10 @@ This is *transport lifecycle* only. It does not guarantee a stopped physical rob
 The legacy `grpcClient::MapStream()` in [rc_agent](https://github.com/ARDev1161/rc_agent/blob/feat/rc-api-v2/network/client.cpp) now snapshots the map sequence and `GetMapResponse` payload under one `muMap` lock and performs gRPC `Write`/`Read` **outside** the lock. This removes a potential ROS2 map callback stall and sequence/payload race. As before, the agent compares only `map_seq`, **not full OccupancyGrid contents**. The Map, Pose and Zone stream loops now respect failed gRPC Write/Read to let the legacy retry policy handle disconnections.
 
 The cross-repo real-peer CI test verifies the initial map and a changed map sequence with independent objects, then cancellation. [Source 403d499735f5](https://github.com/ARDev1161/rc_agent/commit/403d499735f5b996ee86011c0ee459569d05de11) · [CI 42444234818](https://github.com/ARDev1161/rc_agent/actions/runs/42444234818). Verify this CI's result before claiming success. P1 manual hardware and UI gates remain outstanding; P5 changed-only telemetry beyond the legacy map sequence and video-selection policy have not been implemented.
+
+
+## P1 consistent zone snapshots and independent pose/zone transport — 2026-11-08
+
+`ZoneStream` now reads `zone_seq` and the corresponding zone map under one mutex acquisition and sends its snapshot without holding the mutex. Both `PoseStream` and `ZoneStream` construct their gRPC streams only after releasing the `muMap` lock. The paired [AmurCore real-peer test](https://github.com/ARDev1161/AmurCore/blob/feat/rc-api-v2/tests/real_peer_smoke.cpp) verifies both legacy streams separately from the stopped `MapStream`, including changed data and cancellation.
+
+[Working source f2ad035d2139](https://github.com/ARDev1161/rc_agent/commit/f2ad035d2139a6a0b534ef2b1ea07f2aec5c5c6e) / [CI 42445880201](https://github.com/ARDev1161/rc_agent/actions/runs/42445880201) (verify final result before claiming PASS). No proto change, new endpoint, Nav2 behavior or motor/velocity safety implementation. P1 remains IN PROGRESS pending manual P1-01–08.

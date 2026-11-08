@@ -1,3 +1,3 @@
-# P1 coherent legacy map snapshot transport
-source_revision=403d499735f5b996ee86011c0ee459569d05de11
-source_ci=https://github.com/ARDev1161/rc_agent/actions/runs/42444234818
+# P1 real pose/zone gRPC stream isolation source refresh
+feat/rc-api-v2 SHA: f2ad035d2139a6a0b534ef2b1ea07f2aec5c5c6e
+CI: https://github.com/ARDev1161/rc_agent/actions/runs/42445880201
