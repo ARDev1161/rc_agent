@@ -202,3 +202,8 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - Source/test SHA `29cda7bf4a390bb5f672feacdbcd4f70d880588a`: [RC API v2 CI #42435001800](https://github.com/ARDev1161/rc_agent/actions/runs/42435001800) **SUCCESS** (all 5 jobs).
 - Docs-only SHA `5690aff05a2d4fc02c89b8a75cfca37941aa0e04`: [GitHub Pages CI #42435184232](https://github.com/ARDev1161/rc_agent/actions/runs/42435184232) **SUCCESS** (Sphinx/Doxygen isolation + Pages deploy).
 - These success claims are scoped to exact source and docs revisions; plan-only handoff commit does not rerun source CI because workflows filter paths. P1 manual hardware/GUI/VPN/Nav2/GStreamer gates remain **NOT RUN**. Next permitted work: additional targeted P1 reliability tests or manual P1 acceptance; do not implement P2 until approved gate passes. Do not merge documentation or source feature branches.
+
+
+### P1 failed-stream controls regression — 2026-11-08
+- Added `tests/grpc_client_smoke.cpp` assertion after mocked UNAVAILABLE streaming RPC: previously valid controls remain unchanged, matching unary failure behavior. Source test commit [`ef600cfa`](https://github.com/ARDev1161/rc_agent/commit/ef600cfaa17e8ac9a34de13795d148ccc2481385). No proto or production runtime changes.
+- CI for this test commit: NOT YET VERIFIED at authoring; check latest feature-head Actions (protobuf, config, client loopback, ROS2 Humble, real peer). Physical P1-01..08 remain NOT RUN; P1 IN PROGRESS, P2 blocked by manual acceptance.
