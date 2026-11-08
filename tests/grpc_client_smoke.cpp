@@ -364,6 +364,33 @@ int main() {
                     "Mixed cancellation overwrote valid controls");
         }
 
+        // Stopping during a retry backoff must report CANCELLED, not the
+        // transient UNAVAILABLE that triggered the retry. The mock's
+        // fail-next flag is consumed only after the first RPC reaches it.
+        mock.fail_next_stream.store(true);
+        grpcClient backoff_stream(channel, controls, sensors, map, true);
+        auto backoff_rpc = std::async(std::launch::async, [&backoff_stream]() {
+            return backoff_stream.DataStreamExchange();
+        });
+        for (int i = 0; i < 300 && mock.fail_next_stream.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool backoff_failure_delivered = !mock.fail_next_stream.load();
+        // Let the first failed RPC return and enter the retry delay.
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        backoff_stream.stopStream();
+        const bool backoff_finished =
+            backoff_rpc.wait_for(std::chrono::seconds(3)) == std::future_status::ready;
+        require(backoff_failure_delivered, "Retry backoff test did not reach operator");
+        require(backoff_finished, "Stop during stream retry backoff did not finish");
+        require(backoff_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Stopped stream backoff leaked transient failure status");
+        {
+            std::lock_guard<std::mutex> lock(*backoff_stream.getMutex());
+            require(controls->basecontrol().linearvelocity() == 11.0,
+                    "Stream retry shutdown changed valid controls");
+        }
+
         // The streaming transport must obey the same one-shot policy.
         mock.fail_next_stream = true;
         grpcClient one_shot_stream(channel, controls, sensors, map, false);
