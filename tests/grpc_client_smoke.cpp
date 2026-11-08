@@ -23,6 +23,8 @@ public:
     std::atomic<bool> fail_next_unary{false};
     std::atomic<bool> fail_next_stream{false};
     std::atomic<unsigned> unary_count{0};
+    std::atomic<bool> hold_unary{false};
+    std::atomic<bool> unary_waiting{false};
     std::atomic<bool> release_reply{false};
     std::mutex observed_mutex;
     std::string observed_robot_id;
@@ -49,10 +51,19 @@ public:
                observed_axis == "linear.x";
     }
 
-    grpc::Status DataExchange(grpc::ServerContext *,
-                              const Robot::Sensors *incoming,
-                              Robot::Controls *reply) override {
+    grpc::Status DataExchange(grpc::ServerContext *ctx,
+                               const Robot::Sensors *incoming,
+                               Robot::Controls *reply) override {
         ++unary_count;
+        if (hold_unary.load()) {
+            unary_waiting.store(true);
+            while (hold_unary.load() && !ctx->IsCancelled()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            if (ctx->IsCancelled()) {
+                return grpc::Status(grpc::StatusCode::CANCELLED, "Unary canceled");
+            }
+        }
         if (fail_next_unary.exchange(false)) {
             return grpc::Status(grpc::StatusCode::UNAVAILABLE, "Simulated disconnect");
         }
@@ -219,6 +230,34 @@ int main() {
         require(pending.get().ok(), "Retry-enabled unary did not recover");
         require(mock.unary_count.load() == before + 2,
                 "Retry-enabled unary performed unexpected extra attempts");
+
+        // A blocked unary RPC must be canceled by stopStream as well; no
+        // stale controls may be applied, and a stopped client is terminal.
+        mock.hold_unary.store(true);
+        mock.unary_waiting.store(false);
+        grpcClient unary_cancel(channel, controls, sensors, map, true);
+        auto unary_pending = std::async(std::launch::async, [&unary_cancel]() {
+            return unary_cancel.DataExchange();
+        });
+        for (int i = 0; i < 300 && !mock.unary_waiting.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool unary_started = mock.unary_waiting.load();
+        unary_cancel.stopStream();
+        const bool unary_finished =
+            unary_pending.wait_for(std::chrono::seconds(3)) == std::future_status::ready;
+        mock.hold_unary.store(false);
+        require(unary_started, "Unary cancellation did not reach mock");
+        require(unary_finished, "stopStream did not cancel unary RPC");
+        require(unary_pending.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Stopped unary RPC returned unexpected status");
+        require(unary_cancel.DataExchange().error_code() == grpc::StatusCode::CANCELLED,
+                "Stopped client restarted unary RPC");
+        {
+            std::lock_guard<std::mutex> lock(*unary_cancel.getMutex());
+            require(controls->basecontrol().linearvelocity() == 11.0,
+                    "Canceled unary RPC changed previously valid controls");
+        }
 
         // Simulate a server that holds the reply. stopStream must cancel
         // the outstanding gRPC Read and preserve the last controls snapshot.
