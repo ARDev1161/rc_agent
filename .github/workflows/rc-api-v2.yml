@@ -168,7 +168,7 @@ jobs:
           protoc --experimental_allow_proto3_optional -I network/protobuf \
             --cpp_out=generated/network/protobuf --grpc_out=generated/network/protobuf \
             --plugin=protoc-gen-grpc="$(command -v grpc_cpp_plugin)" network/protobuf/*.proto
-          g++ -std=c++17 -O0 -I. -Ipeer -Igenerated -Igenerated/network/protobuf \
+          g++ -std=c++17 -O0 -DRC_AGENT_ROOT -I. -Ipeer -Igenerated -Igenerated/network/protobuf \
             generated/network/protobuf/*.pb.cc \
             peer/network/server.cpp network/client.cpp peer/tests/real_peer_smoke.cpp \
             $(pkg-config --cflags --libs grpc++ protobuf) -pthread -o generated/real_peer_smoke
