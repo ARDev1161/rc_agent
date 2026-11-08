@@ -42,6 +42,9 @@ Amur:
         display_name = "Robot";
         capabilities = ("manual.velocity", "navigation.nav2", "map.2d", "video");
         velocity_axes = ("linear.x", "angular.z");
+        // Optional ROS2 sensor_msgs/msg/BatteryState topic. Leave unset for
+        // robots without battery telemetry; no zero-valued battery is sent.
+        // battery_topic = "/battery_state";
     };
 
     Peripheral:
