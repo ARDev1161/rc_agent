@@ -30,6 +30,14 @@ void BatteryStateNode::batteryStateCallback(
   // a multi-threaded executor uses separate callback groups in the future.
   auto battery = batteryStateToProto(*msg);
   std::lock_guard<std::mutex> lock(*sensors_mutex_);
+  // A ROS publisher can explicitly report that its pack is absent. Do not
+  // keep an optional protobuf battery in that case, or display the previous
+  // percentage until the timeout expires.
+  if (!msg->present) {
+    sensors_->clear_batterystate();
+    received_message_ = false;
+    return;
+  }
   *sensors_->mutable_batterystate() = std::move(battery);
   last_message_ = std::chrono::steady_clock::now();
   received_message_ = true;
