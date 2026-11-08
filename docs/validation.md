@@ -19,3 +19,9 @@ The [eight-case P1 manual checklist](https://github.com/ARDev1161/AmurCore/blob/
 ## Scope of this documentation CI
 
 It checks documentation branch isolation, Doxygen XML/HTML API generation from a separately checked out source revision, successful Sphinx rendering, Mermaid markup, navigable API pages, and presence of a source SHA in the site title. It does **not** replace the source code's Qt5, ROS2, gRPC or hardware test matrix.
+
+## P1 mock deadlock regression — 2026-11-08
+
+[Source revision da2b081dbe25a4bf8c560cfa3db7eb0f0ac18252](https://github.com/ARDev1161/rc_agent/commit/da2b081dbe25a4bf8c560cfa3db7eb0f0ac18252) fixes `OperatorMock::capture()` recursively calling itself under the descriptor mutex. A red [prior run](https://github.com/ARDev1161/rc_agent/actions/runs/42429638780) hung after `Client started`. The test now captures robot ID/capability/axis under one lock for unary and streamed snapshots, clears those fields on legacy snapshots, and tests a v2-to-legacy transition.
+
+This is a simulated transport regression, **not a completed P1 manual gate**. [CI run](https://github.com/ARDev1161/rc_agent/actions/runs/42431794847) must pass before the fix is verified. The actual robot/VPN/joystick/Nav2/map/GStreamer checks remain outstanding.
