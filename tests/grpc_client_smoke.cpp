@@ -196,6 +196,28 @@ int main() {
                     "Stream controls were not applied");
         }
 
+        // Clean server EOF must reconnect when retry is enabled. The next
+        // stream must receive a fresh RobotInfo snapshot; stop is terminal.
+        mock.release_reply.store(true);
+        const unsigned clean_before = mock.stream_count.load();
+        grpcClient clean_retry(channel, controls, sensors, map, true);
+        auto clean_rpc = std::async(std::launch::async, [&clean_retry]() {
+            return clean_retry.DataStreamExchange();
+        });
+        for (int i = 0; i < 1000 &&
+             mock.stream_count.load() < clean_before + 2; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool reconnected = mock.stream_count.load() >= clean_before + 2;
+        clean_retry.stopStream();
+        const bool finished = clean_rpc.wait_for(std::chrono::seconds(3)) ==
+                              std::future_status::ready;
+        require(finished, "Clean-EOF retry did not stop");
+        require(clean_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Clean-EOF retry did not report explicit shutdown");
+        require(reconnected, "Clean server EOF did not trigger a fresh stream");
+        require(mock.matchesDescriptor(), "Reconnected stream lost RobotInfo");
+
         // A legacy snapshot must clear metadata observed on the previous
         // v2 unary/stream. The mock must never retain stale capabilities.
         {
