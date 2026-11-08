@@ -227,6 +227,11 @@ int main() {
                 "One-shot stream did not surface peer failure");
         require(std::chrono::steady_clock::now() - start < std::chrono::seconds(3),
                 "One-shot stream retried or blocked unexpectedly");
+        {
+            std::lock_guard<std::mutex> lock(*one_shot_stream.getMutex());
+            require(controls->basecontrol().linearvelocity() == 11.0,
+                    "Failed stream overwrote previously valid controls");
+        }
     } catch (const std::exception &e) {
         mock.release_reply = true;
         server->Shutdown();
