@@ -1,6 +1,7 @@
 #ifndef BATTERY_STATE_NODE_H_
 #define BATTERY_STATE_NODE_H_
 
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <rclcpp/rclcpp.hpp>
@@ -19,6 +20,11 @@ class BatteryStateNode : public rclcpp::Node
   /// Pointer to a BatteryState object for storing or further processing data.
   std::shared_ptr<Robot::Sensors> sensors_;
   std::shared_ptr<std::mutex> sensors_mutex_;
+  std::chrono::steady_clock::time_point last_message_{};
+  bool received_message_{false};
+  rclcpp::TimerBase::SharedPtr stale_timer_;
+  std::chrono::milliseconds stale_timeout_;
+  void clearStaleBattery();
 public:
   /**
    * @brief Constructor for BatteryStateNode.
@@ -31,7 +37,8 @@ public:
    */
   BatteryStateNode(std::shared_ptr<Robot::Sensors> sensors,
                    std::shared_ptr<std::mutex> sensors_mutex,
-                   const std::string &topicName);
+                   const std::string &topicName,
+                   std::chrono::milliseconds stale_timeout = std::chrono::seconds(5));
 
 private:
   /**
