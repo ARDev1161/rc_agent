@@ -162,3 +162,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - Replaced recursion with capture of the stable ID and reset of observed capability/axis before every snapshot; streaming uses the same mutex-protected capture. Added a legacy-after-v2 unary regression proving no old descriptor leaks across the same client session.
 - Scope: P1 automated transport test only. Production client, protobuf wire and user-facing behavior unchanged. **CI pending for the fixing commit** at time of authorship; check actual `feat/rc-api-v2` HEAD run and fix any remaining red jobs.
 - Do not infer physical robot/VPN/Nav2/GStreamer behavior from loopback; P1 stays **IN PROGRESS** pending P1-01..08 acceptance.
+
+
+## P1 CI verified after descriptor regression — 2026-11-08
+- Working source/test commit `da2b081dbe25a4bf8c560cfa3db7eb0f0ac18252`: [RC API v2 CI run #42431794847](https://github.com/ARDev1161/rc_agent/actions/runs/42431794847) **SUCCESS** at this exact test revision. All four jobs passed: ROS2 Humble colcon build/test, config GTests, protobuf compatibility and the fixed real gRPC client loopback (previous 20s hang eliminated).
+- Paired peer tested source/test commit `bc6d90648d5bd0dfbedb984373524fc1c07857e1`; the common `robot.proto` and `rc_api_v2.proto` remained unchanged and mirrored.
+- `documentation` revision `54797a67276f1b5e82e946c03c2846051962269d`: [Sphinx/Doxygen/Pages run #42431880321](https://github.com/ARDev1161/rc_agent/actions/runs/42431880321) **SUCCESS**, generated API source checkout pinned at tested commit during build. Documentation remains separate from production branches.
+- This is **CI-only evidence**, not P1 hardware acceptance. P1 remains **IN PROGRESS** with P1-01..08 live robot/VPN/joystick/map/TF2/Nav2/GStreamer checks outstanding. No P2 implementation is authorized before manual gate; next safe action is to record real smoke results when robot is available, or add only genuinely useful deterministic P1 regressions. Do not misinterpret an untested `PLAN.md`-only successor commit as a source-code CI pass.
