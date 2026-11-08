@@ -58,6 +58,11 @@ grpc::Status runStreamWithRetry(const std::string &stream_name,
         }
     }
 
+    // Shutdown is terminal even when it interrupts retry backoff after a
+    // transient UNAVAILABLE; callers must not mistake this for a live failure.
+    if (stopped_flag.load()) {
+        return grpc::Status(grpc::StatusCode::CANCELLED, "Stream was stopped");
+    }
     return status;
 }
 
