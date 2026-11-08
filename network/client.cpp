@@ -197,9 +197,12 @@ grpc::Status grpcClient::MapStream()
         [this](grpc::ClientContext &context) { return registerStreamContext(context); },
         [this](grpc::ClientContext &context) { unregisterStreamContext(context); },
         [this](grpc::ClientContext &context) {
-            std::unique_lock<std::mutex> lock(*muMap);
-            if (!map_) {
-                return std::shared_ptr<grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest>>(nullptr);
+            // Never hold the ROS map mutex while creating an RPC stream.
+            {
+                std::lock_guard<std::mutex> lock(*muMap);
+                if (!map_) {
+                    return std::shared_ptr<grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest>>(nullptr);
+                }
             }
             return std::shared_ptr<grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest>>(
                 stub_->MapStream(&context));
@@ -212,29 +215,26 @@ grpc::Status grpcClient::MapStream()
 
             while (!stoppedStream)
             {
+                map_service::GetMapResponse outgoing;
                 bool changed = false;
                 {
-                    std::unique_lock<std::mutex> lock(*muMap);
-                    if (map_) {
-                        std::uint64_t seq = map_->map_seq();
-                        if (!has_seq || seq != last_seq) {
-                            last_seq = seq;
-                            has_seq = true;
-                            changed = true;
-                        }
+                    // Sequence and payload must describe the SAME snapshot.
+                    // No map hashing, and no mutex held over gRPC Write/Read.
+                    std::lock_guard<std::mutex> lock(*muMap);
+                    if (map_ && (!has_seq || map_->map_seq() != last_seq)) {
+                        outgoing = *map_;
+                        last_seq = outgoing.map_seq();
+                        has_seq = true;
+                        changed = true;
                     }
                 }
                 if (!changed) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(idle_sleep_ms));
                     continue;
                 }
-                {
-                    std::unique_lock<std::mutex> lock(*muMap);
-                    if (map_) {
-                        stream.Write(*map_);
-                    }
+                if (!stream.Write(outgoing) || !stream.Read(&request)) {
+                    break;  // Return to retry policy instead of spinning.
                 }
-                stream.Read(&request);
             }
         }
     );
@@ -282,8 +282,9 @@ grpc::Status grpcClient::PoseStream()
                     std::this_thread::sleep_for(std::chrono::milliseconds(idle_sleep_ms));
                     continue;
                 }
-                stream.Write(state);
-                stream.Read(&request);
+                if (!stream.Write(state) || !stream.Read(&request)) {
+                    break;
+                }
             }
         }
     );
@@ -337,8 +338,9 @@ grpc::Status grpcClient::ZoneStream()
                         *state.mutable_zone_map() = map_->zone_map();
                     }
                 }
-                stream.Write(state);
-                stream.Read(&request);
+                if (!stream.Write(state) || !stream.Read(&request)) {
+                    break;
+                }
             }
         }
     );
