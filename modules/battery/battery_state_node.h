@@ -1,7 +1,8 @@
 #ifndef BATTERY_STATE_NODE_H_
 #define BATTERY_STATE_NODE_H_
 
-#include <iostream>
+#include <memory>
+#include <mutex>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/battery_state.hpp>
 #include "battery_state_handler.h"
@@ -16,7 +17,8 @@
 class BatteryStateNode : public rclcpp::Node
 {
   /// Pointer to a BatteryState object for storing or further processing data.
-  BatteryState* batteryStatePtr;
+  std::shared_ptr<Robot::Sensors> sensors_;
+  std::shared_ptr<std::mutex> sensors_mutex_;
 public:
   /**
    * @brief Constructor for BatteryStateNode.
@@ -27,7 +29,9 @@ public:
    * @param batteryStatePtr Pointer to the BatteryState object for data storage.
    * @param topicName Name of the topic to subscribe to.
    */
-  BatteryStateNode(BatteryState* batteryStatePtr, std::string topicName);
+  BatteryStateNode(std::shared_ptr<Robot::Sensors> sensors,
+                   std::shared_ptr<std::mutex> sensors_mutex,
+                   const std::string &topicName);
 
 private:
   /**
