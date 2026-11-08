@@ -25,3 +25,10 @@ It checks documentation branch isolation, Doxygen XML/HTML API generation from a
 [Source revision da2b081dbe25a4bf8c560cfa3db7eb0f0ac18252](https://github.com/ARDev1161/rc_agent/commit/da2b081dbe25a4bf8c560cfa3db7eb0f0ac18252) fixes `OperatorMock::capture()` recursively calling itself under the descriptor mutex. A red [prior run](https://github.com/ARDev1161/rc_agent/actions/runs/42429638780) hung after `Client started`. The test now captures robot ID/capability/axis under one lock for unary and streamed snapshots, clears those fields on legacy snapshots, and tests a v2-to-legacy transition.
 
 This is a simulated transport regression, **not a completed P1 manual gate**. [CI run](https://github.com/ARDev1161/rc_agent/actions/runs/42431794847) must pass before the fix is verified. The actual robot/VPN/joystick/Nav2/map/GStreamer checks remain outstanding.
+
+
+## Real AmurCore ↔ rc_agent P1 integration test — 2026-11-08
+
+The independent working branches now run a new **real-peer-grpc-loopback** CI job. Each job checks out the two actual C++ implementations, compares the mirrored protobuf contracts, compiles the production transport peers together, and exercises an ephemeral localhost gRPC connection. The shared scenario, maintained under [AmurCore/tests/real_peer_smoke.cpp](https://github.com/ARDev1161/AmurCore/blob/feat/rc-api-v2/tests/real_peer_smoke.cpp), checks legacy control/sensor roundtrips, v2 descriptor and supported axes, legacy-after-v2 reset, fresh-channel reconnect, and workstation mutex availability during callbacks.
+
+The [current CI workflow](https://github.com/ARDev1161/rc_agent/actions/runs/42432813251) must complete successfully before this gate can be marked PASS. No test sends commands to robot actuators. Hardware/VPN/joystick/Nav2/map/GStreamer acceptance remains separate and **not completed**; P1 is still IN PROGRESS.
