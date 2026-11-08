@@ -30,6 +30,16 @@ TEST(BatteryFreshness, PublishExpireAndRecover)
   executor.add_node(battery);
   executor.add_node(publisher_node);
 
+  // No publisher data must never fabricate a 0%-charged pack.
+  for (int i = 0; i < 20; ++i) {
+    executor.spin_some();
+    std::this_thread::sleep_for(10ms);
+  }
+  {
+    std::lock_guard<std::mutex> lock(*mutex);
+    ASSERT_FALSE(sensors->has_batterystate());
+  }
+
   auto publish_and_wait = [&](float percentage) {
     sensor_msgs::msg::BatteryState message;
     message.present = true;
@@ -71,4 +81,21 @@ TEST(BatteryFreshness, PublishExpireAndRecover)
   }
   EXPECT_TRUE(expired);
   ASSERT_TRUE(publish_and_wait(0.76f));
+  {
+    std::lock_guard<std::mutex> lock(*mutex);
+    EXPECT_TRUE(sensors->has_batterystate());
+    EXPECT_FLOAT_EQ(sensors->batterystate().percentage(), 0.76f);
+  }
+
+  // A new sample resets the expiration window: it must not disappear on
+  // the timer tick that would have expired the previous 42% sample.
+  const auto early_deadline = std::chrono::steady_clock::now() + 150ms;
+  while (std::chrono::steady_clock::now() < early_deadline) {
+    executor.spin_some();
+    std::this_thread::sleep_for(10ms);
+  }
+  {
+    std::lock_guard<std::mutex> lock(*mutex);
+    EXPECT_TRUE(sensors->has_batterystate());
+  }
 }
