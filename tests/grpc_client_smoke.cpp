@@ -30,10 +30,14 @@ public:
     std::string observed_robot_id;
     std::string observed_capability;
     std::string observed_axis;
+    bool observed_battery{false};
+    float observed_battery_percentage{0.0f};
 
     void capture(const Robot::Sensors &incoming) {
         std::lock_guard<std::mutex> lock(observed_mutex);
         observed_robot_id = incoming.robot_info().robot_id();
+        observed_battery = incoming.has_batterystate();
+        observed_battery_percentage = incoming.batterystate().percentage();
         observed_capability.clear();
         observed_axis.clear();
         if (incoming.robot_info().capabilities_size() > 0) {
@@ -132,6 +136,28 @@ int main() {
             std::lock_guard<std::mutex> lock(*mutex);
             require(controls->basecontrol().linearvelocity() == 11.0,
                     "Unary controls reply was not applied");
+        }
+
+        // Battery telemetry uses the existing optional Sensors field. Missing
+        // data must remain absent, not a fabricated 0% battery.
+        {
+            std::lock_guard<std::mutex> lock(mock.observed_mutex);
+            require(!mock.observed_battery,
+                    "Robot without battery incorrectly advertised a battery");
+        }
+        {
+            std::lock_guard<std::mutex> lock(*client.getMutex());
+            sensors->mutable_batterystate()->set_percentage(0.625f);
+            sensors->mutable_batterystate()->set_voltage(24.1f);
+            sensors->mutable_batterystate()->set_present(true);
+        }
+        require(client.DataExchange().ok(), "Battery unary telemetry failed");
+        {
+            std::lock_guard<std::mutex> lock(mock.observed_mutex);
+            require(mock.observed_battery &&
+                    mock.observed_battery_percentage > 0.624f &&
+                    mock.observed_battery_percentage < 0.626f,
+                    "Battery percentage was lost in existing Sensors transport");
         }
 
         // Use a *fresh*, potentially CONNECTING channel to catch the startup
