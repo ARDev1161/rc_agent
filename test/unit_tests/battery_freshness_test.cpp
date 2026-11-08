@@ -66,6 +66,26 @@ TEST(BatteryFreshness, PublishExpireAndRecover)
     EXPECT_TRUE(sensors->has_batterystate());
   }
 
+  // A second update while the publisher is active must extend freshness.
+  // Wait less than one expiry window, refresh with a distinct percentage,
+  // and verify the new sample survives past the original sample's deadline.
+  const auto first_sample_time = std::chrono::steady_clock::now();
+  while (std::chrono::steady_clock::now() - first_sample_time < 200ms) {
+    executor.spin_some();
+    std::this_thread::sleep_for(10ms);
+  }
+  ASSERT_TRUE(publish_and_wait(0.55f));
+  const auto refreshed_time = std::chrono::steady_clock::now();
+  while (std::chrono::steady_clock::now() - refreshed_time < 180ms) {
+    executor.spin_some();
+    std::this_thread::sleep_for(10ms);
+  }
+  {
+    std::lock_guard<std::mutex> lock(*mutex);
+    ASSERT_TRUE(sensors->has_batterystate());
+    EXPECT_FLOAT_EQ(sensors->batterystate().percentage(), 0.55f);
+  }
+
   // No further publications: the real ROS timer must clear the outgoing
   // snapshot. This checks the actual subscriber/timer, not a mock clock.
   auto deadline = std::chrono::steady_clock::now() + 3s;
