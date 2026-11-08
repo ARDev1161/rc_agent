@@ -26,8 +26,8 @@ void BatteryStateNode::batteryStateCallback(
   }
 
   // Convert outside the lock; the gRPC transport snapshots Sensors under
-  // this same mutex. The ROS executor's default callback group serializes
-  // subscription and timer callbacks.
+  // this same mutex. Guard the freshness timestamp as well, including when
+  // a multi-threaded executor uses separate callback groups in the future.
   auto battery = batteryStateToProto(*msg);
   std::lock_guard<std::mutex> lock(*sensors_mutex_);
   *sensors_->mutable_batterystate() = std::move(battery);
@@ -37,14 +37,14 @@ void BatteryStateNode::batteryStateCallback(
 
 void BatteryStateNode::clearStaleBattery()
 {
-  if (!received_message_ || !sensors_ || !sensors_mutex_) {
+  if (!sensors_ || !sensors_mutex_) {
     return;
   }
-  if (std::chrono::steady_clock::now() - last_message_ < stale_timeout_) {
-    return;
-  }
-
   std::lock_guard<std::mutex> lock(*sensors_mutex_);
+  if (!received_message_ ||
+      std::chrono::steady_clock::now() - last_message_ < stale_timeout_) {
+    return;
+  }
   sensors_->clear_batterystate();
   received_message_ = false;
   RCLCPP_WARN(get_logger(), "BatteryState timed out; clearing stale telemetry");
