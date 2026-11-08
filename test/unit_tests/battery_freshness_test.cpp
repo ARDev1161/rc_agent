@@ -76,7 +76,7 @@ TEST(BatteryFreshness, PublishExpireAndRecover)
   }
   ASSERT_TRUE(publish_and_wait(0.55f));
   const auto refreshed_time = std::chrono::steady_clock::now();
-  while (std::chrono::steady_clock::now() - refreshed_time < 180ms) {
+  while (std::chrono::steady_clock::now() - refreshed_time < 300ms) {
     executor.spin_some();
     std::this_thread::sleep_for(10ms);
   }
