@@ -207,3 +207,9 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 ### P1 failed-stream controls regression — 2026-11-08
 - Added `tests/grpc_client_smoke.cpp` assertion after mocked UNAVAILABLE streaming RPC: previously valid controls remain unchanged, matching unary failure behavior. Source test commit [`ef600cfa`](https://github.com/ARDev1161/rc_agent/commit/ef600cfaa17e8ac9a34de13795d148ccc2481385). No proto or production runtime changes.
 - CI for this test commit: NOT YET VERIFIED at authoring; check latest feature-head Actions (protobuf, config, client loopback, ROS2 Humble, real peer). Physical P1-01..08 remain NOT RUN; P1 IN PROGRESS, P2 blocked by manual acceptance.
+
+
+## P1 stopStream blocked gRPC Read cancellation — 2026-11-08
+- Stop previously set an atomic flag but could not interrupt a synchronous gRPC Read/Write. The gateway now tracks active grpc::ClientContext objects under a mutex for DataStreamExchange/MapStream/PoseStream/ZoneStream; context registration is rejected after stop, RAII unregistration occurs before destruction, and stopStream atomically sets stopped state and calls TryCancel for all active contexts.
+- Reconnect requires a fresh grpcClient after stop; removed the per-stream automatic reset of the stopped flag. Backoff sleep polls the stop flag every 10ms. Transport shutdown does NOT implement v2 velocity watchdog/lease or motor safety. Protobuf and ROS2 endpoints unchanged.
+- Mock-loopback test intentionally blocks Read and checks CANCELLED return, no retry/restart, and preserved last controls. CI **NOT YET VERIFIED** for this commit; inspect exact GitHub Actions feature HEAD. P1 IN PROGRESS; P1-01..08 hardware/VPN/GUI/Nav2/map/video NOT RUN.

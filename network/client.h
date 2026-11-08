@@ -5,6 +5,8 @@
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <mutex>
+#include <vector>
 
 #include <grpcpp/grpcpp.h>
 
@@ -34,7 +36,12 @@ class grpcClient
     std::shared_ptr<map_service::GetMapResponse> map_;
 
     /// Flag indicating whether the streaming has been stopped.
-    std::atomic<bool> stoppedStream{true};
+    // A stopped instance never restarts; reconnect constructs a new client.
+    std::atomic<bool> stoppedStream{false};
+    std::mutex muActiveContexts;
+    std::vector<grpc::ClientContext*> activeContexts;
+    bool registerStreamContext(grpc::ClientContext &context);
+    void unregisterStreamContext(grpc::ClientContext &context);
     /// Flag to indicate whether to retry connection if it fails.
     bool retryConnect;
     /// Delay (in milliseconds) between connection retry attempts.
@@ -111,7 +118,9 @@ class grpcClient
     /**
      * @brief Stops the current data stream.
      *
-     * Sets the stoppedStream flag to true, indicating that streaming should cease.
+     * Cancels in-flight stream contexts (including blocked Read/Write).
+     * This is transport cancellation, NOT a robot velocity safety watchdog.
+     * A stopped instance cannot restart: reconnect creates a new client.
      */
     void stopStream();
 

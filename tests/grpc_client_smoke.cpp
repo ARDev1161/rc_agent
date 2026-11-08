@@ -218,6 +218,39 @@ int main() {
         require(mock.unary_count.load() == before + 2,
                 "Retry-enabled unary performed unexpected extra attempts");
 
+        // Simulate a server that holds the reply. stopStream must cancel
+        // the outstanding gRPC Read and preserve the last controls snapshot.
+        mock.received.store(false);
+        mock.release_reply.store(false);
+        grpcClient cancellable(channel, controls, sensors, map, true);
+        auto blocked = std::async(std::launch::async, [&cancellable]() {
+            return cancellable.DataStreamExchange();
+        });
+        for (int i = 0; i < 300 && !mock.received.load(); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        require(mock.received.load(), "Cancel test did not reach the mock");
+        require(blocked.wait_for(std::chrono::milliseconds(50)) ==
+                    std::future_status::timeout,
+                "Mock did not block the stream response");
+        const auto stop_start = std::chrono::steady_clock::now();
+        cancellable.stopStream();
+        require(blocked.wait_for(std::chrono::seconds(3)) ==
+                    std::future_status::ready, "stopStream did not unblock Read");
+        const grpc::Status stopped = blocked.get();
+        require(stopped.error_code() == grpc::StatusCode::CANCELLED,
+                "stopStream did not return CANCELLED");
+        require(std::chrono::steady_clock::now() - stop_start <
+                    std::chrono::seconds(3), "stopStream took too long");
+        {
+            std::lock_guard<std::mutex> lock(*cancellable.getMutex());
+            require(controls->basecontrol().linearvelocity() == 11.0,
+                    "Cancellation overwrote previously valid controls");
+        }
+        require(cancellable.DataStreamExchange().error_code() ==
+                    grpc::StatusCode::CANCELLED,
+                "Stopped client restarted a stream");
+
         // The streaming transport must obey the same one-shot policy.
         mock.fail_next_stream = true;
         grpcClient one_shot_stream(channel, controls, sensors, map, false);

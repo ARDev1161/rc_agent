@@ -1,23 +1,36 @@
 #include "client.h"
 #include <cstdint>
+#include <algorithm>
 #include <grpcpp/grpcpp.h>
 
 namespace {
 
-template<typename StreamT, typename FactoryFn, typename PumpFn>
+template<typename UnregisterFn>
+struct ActiveContextGuard {
+    grpc::ClientContext &context;
+    UnregisterFn &unregisterContext;
+    ~ActiveContextGuard() { unregisterContext(context); }
+};
+
+template<typename StreamT, typename FactoryFn, typename PumpFn,
+         typename RegisterFn, typename UnregisterFn>
 grpc::Status runStreamWithRetry(const std::string &stream_name,
                                 std::atomic<bool> &stopped_flag,
                                 int retry_delay_ms,
                                 bool retry_enabled,
+                                RegisterFn &&register_context,
+                                UnregisterFn &&unregister_context,
                                 FactoryFn &&stream_factory,
                                 PumpFn &&pump_loop)
 {
-    grpc::Status status;
-    bool retry = true;
-    stopped_flag = false;
+    grpc::Status status(grpc::StatusCode::CANCELLED, "Stream was stopped");
 
-    while (retry && !stopped_flag.load()) {
+    while (!stopped_flag.load()) {
         grpc::ClientContext context;
+        if (!register_context(context)) {
+            return grpc::Status(grpc::StatusCode::CANCELLED, "Stream was stopped");
+        }
+        ActiveContextGuard<UnregisterFn> context_guard{context, unregister_context};
         auto stream = stream_factory(context);
         if (!stream) {
             return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "Stream factory returned null");
@@ -28,14 +41,20 @@ grpc::Status runStreamWithRetry(const std::string &stream_name,
         stream->WritesDone();
         status = stream->Finish();
         if (status.ok()) {
-            retry = false;
+            return status;
         } else {
             std::cout << "Error " << status.error_code() << " : " << status.error_message() << std::endl;
             std::cout << stream_name << " rpc failed." << std::endl;
             if (!retry_enabled || stopped_flag.load()) {
                 break;
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms));
+            constexpr int kSleepStepMs = 10;
+            for (int elapsed = 0;
+                 elapsed < retry_delay_ms && !stopped_flag.load();
+                 elapsed += kSleepStepMs) {
+                std::this_thread::sleep_for(
+                    std::chrono::milliseconds(std::min(kSleepStepMs, retry_delay_ms - elapsed)));
+            }
         }
     }
 
@@ -99,9 +118,32 @@ grpc::Status grpcClient::DataExchange()
     }
 }
 
+bool grpcClient::registerStreamContext(grpc::ClientContext &context)
+{
+    std::lock_guard<std::mutex> lock(muActiveContexts);
+    if (stoppedStream.load()) {
+        return false;
+    }
+    activeContexts.push_back(&context);
+    return true;
+}
+
+void grpcClient::unregisterStreamContext(grpc::ClientContext &context)
+{
+    std::lock_guard<std::mutex> lock(muActiveContexts);
+    const auto it = std::find(activeContexts.begin(), activeContexts.end(), &context);
+    if (it != activeContexts.end()) {
+        activeContexts.erase(it);
+    }
+}
+
 void grpcClient::stopStream()
 {
-    stoppedStream = true;
+    stoppedStream.store(true);
+    std::lock_guard<std::mutex> lock(muActiveContexts);
+    for (auto *context : activeContexts) {
+        context->TryCancel();
+    }
     std::cout << "Client stopped" << std::endl;
 }
 
@@ -114,6 +156,8 @@ grpc::Status grpcClient::DataStreamExchange()
         stoppedStream,
         retryDelayMilliseconds,
         retryConnect,
+        [this](grpc::ClientContext &context) { return registerStreamContext(context); },
+        [this](grpc::ClientContext &context) { unregisterStreamContext(context); },
         [this](grpc::ClientContext &context) {
             return std::shared_ptr<grpc::ClientReaderWriter<Sensors, Controls>>(
                 stub_->DataStreamExchange(&context));
@@ -150,6 +194,8 @@ grpc::Status grpcClient::MapStream()
         stoppedStream,
         retryDelayMilliseconds,
         retryConnect,
+        [this](grpc::ClientContext &context) { return registerStreamContext(context); },
+        [this](grpc::ClientContext &context) { unregisterStreamContext(context); },
         [this](grpc::ClientContext &context) {
             std::unique_lock<std::mutex> lock(*muMap);
             if (!map_) {
@@ -201,6 +247,8 @@ grpc::Status grpcClient::PoseStream()
         stoppedStream,
         retryDelayMilliseconds,
         retryConnect,
+        [this](grpc::ClientContext &context) { return registerStreamContext(context); },
+        [this](grpc::ClientContext &context) { unregisterStreamContext(context); },
         [this](grpc::ClientContext &context) {
             std::unique_lock<std::mutex> lock(*muMap);
             if (!map_) {
@@ -248,6 +296,8 @@ grpc::Status grpcClient::ZoneStream()
         stoppedStream,
         retryDelayMilliseconds,
         retryConnect,
+        [this](grpc::ClientContext &context) { return registerStreamContext(context); },
+        [this](grpc::ClientContext &context) { unregisterStreamContext(context); },
         [this](grpc::ClientContext &context) {
             std::unique_lock<std::mutex> lock(*muMap);
             if (!map_) {
