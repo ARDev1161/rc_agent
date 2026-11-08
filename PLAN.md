@@ -189,3 +189,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - P1 only: no protobuf or actuator path changes. This does not implement stream cancellation while blocked in gRPC Read (still a separate lifecycle concern), nor P5 safe velocity lease/deadman. CI PENDING; no hardware/VPN/Nav2/map/video acceptance. P1 remains IN PROGRESS.
 
 - Additional `tests/grpc_client_smoke.cpp` assertions: simulated first unary UNAVAILABLE with retry disabled returns once and preserves prior controls; retry-enabled unary recovers after one simulated transient failure with callback mutex available during backoff; unary and streaming one-shot policy both fail promptly. These cases run under the existing grpc-client-loopback GitHub Actions job; CI outcome pending.
+
+
+## Verified P1 transport disconnect and retry regression — 2026-11-08
+- Tested source SHA `29cda7bf4a390bb5f672feacdbcd4f70d880588a` — [GitHub Actions #42435001800](https://github.com/ARDev1161/rc_agent/actions/runs/42435001800) **SUCCESS** at exactly this revision. All 5 jobs: full ROS2 Humble colcon build/test, config GTests, protobuf, gRPC mock failure/recovery, real AmurCore/rc_agent integration.
+- Tested peer `956f2b970885c65664067f8a5a84eea2dc080a91`; both projects compile real peer implementations over unchanged legacy gRPC and mirrored Protobuf.
+- Docs source changes only in separate `documentation` branch, SHA `5690aff05a2d4fc02c89b8a75cfca37941aa0e04`, [Pages CI #42435184232](https://github.com/ARDev1161/rc_agent/actions/runs/42435184232) **pending at handoff**; check deployment and fix if red. The documentation tree must remain isolated and must not be merged to source branches.
+- P1 still **IN PROGRESS**. Headless CI does not validate actual operator GUI workflow, physical joystick, hardware/VPN, Nav2/TF/map/video, safety watchdog or end-to-end lifecycle. Manual P1-01..08 remain **NOT RUN**; no P2 or default branch changes. Stream `stopStream()` still cannot cancel a blocking gRPC Read; atomic flag prevents retry only after the read unblocks. Do not claim fully resilient teleop until the P5 safety gates are implemented.
