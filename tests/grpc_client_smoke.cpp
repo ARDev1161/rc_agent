@@ -324,6 +324,46 @@ int main() {
                     "Concurrent cancellation changed valid controls");
         }
 
+        // A single client may have a blocked unary and a blocked stream at
+        // the same time. Shutdown must cancel both contexts, preserve the
+        // last valid controls, and never retry either RPC afterwards.
+        mock.hold_unary.store(true);
+        mock.unary_waiting.store(false);
+        mock.release_reply.store(false);
+        const unsigned mixed_stream_before = mock.stream_count.load();
+        grpcClient mixed(channel, controls, sensors, map, true);
+        auto mixed_unary = std::async(std::launch::async, [&mixed]() {
+            return mixed.DataExchange();
+        });
+        auto mixed_stream = std::async(std::launch::async, [&mixed]() {
+            return mixed.DataStreamExchange();
+        });
+        for (int i = 0; i < 300 &&
+             (!mock.unary_waiting.load() ||
+              mock.stream_count.load() < mixed_stream_before + 1); ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool mixed_both_started = mock.unary_waiting.load() &&
+            mock.stream_count.load() >= mixed_stream_before + 1;
+        mixed.stopStream();
+        const bool mixed_both_finished =
+            mixed_unary.wait_for(std::chrono::seconds(3)) == std::future_status::ready &&
+            mixed_stream.wait_for(std::chrono::seconds(3)) == std::future_status::ready;
+        mock.hold_unary.store(false);
+        require(mixed_both_started, "Mixed unary and stream did not reach operator");
+        require(mixed_both_finished, "Mixed unary and stream were not both canceled");
+        require(mixed_unary.get().error_code() == grpc::StatusCode::CANCELLED &&
+                    mixed_stream.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Mixed cancellation returned unexpected status");
+        require(mixed.DataExchange().error_code() == grpc::StatusCode::CANCELLED &&
+                    mixed.DataStreamExchange().error_code() == grpc::StatusCode::CANCELLED,
+                "Mixed stopped client restarted an RPC");
+        {
+            std::lock_guard<std::mutex> lock(*mixed.getMutex());
+            require(controls->basecontrol().linearvelocity() == 11.0,
+                    "Mixed cancellation overwrote valid controls");
+        }
+
         // The streaming transport must obey the same one-shot policy.
         mock.fail_next_stream = true;
         grpcClient one_shot_stream(channel, controls, sensors, map, false);
