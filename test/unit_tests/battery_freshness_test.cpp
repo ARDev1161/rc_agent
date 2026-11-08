@@ -87,6 +87,27 @@ TEST(BatteryFreshness, PublishExpireAndRecover)
     EXPECT_FLOAT_EQ(sensors->batterystate().percentage(), 0.76f);
   }
 
+  // The next timeout must also clear the recovered value, not just the
+  // initial sample. This catches stale received_message_ bookkeeping.
+  auto second_deadline = std::chrono::steady_clock::now() + 3s;
+  bool second_expired = false;
+  while (std::chrono::steady_clock::now() < second_deadline) {
+    executor.spin_some();
+    {
+      std::lock_guard<std::mutex> lock(*mutex);
+      second_expired = !sensors->has_batterystate();
+    }
+    if (second_expired) break;
+    std::this_thread::sleep_for(20ms);
+  }
+  EXPECT_TRUE(second_expired);
+  ASSERT_TRUE(publish_and_wait(0.33f));
+  {
+    std::lock_guard<std::mutex> lock(*mutex);
+    ASSERT_TRUE(sensors->has_batterystate());
+    EXPECT_FLOAT_EQ(sensors->batterystate().percentage(), 0.33f);
+  }
+
   // A new sample resets the expiration window: it must not disappear on
   // the timer tick that would have expired the previous 42% sample.
   const auto early_deadline = std::chrono::steady_clock::now() + 150ms;
