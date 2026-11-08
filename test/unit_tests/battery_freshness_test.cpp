@@ -13,6 +13,11 @@ using namespace std::chrono_literals;
 
 TEST(BatteryFreshness, PublishExpireAndRecover)
 {
+  int argc = 0;
+  rclcpp::init(argc, nullptr);
+  struct ShutdownGuard {
+    ~ShutdownGuard() { if (rclcpp::ok()) rclcpp::shutdown(); }
+  } shutdown_guard;
   auto sensors = std::make_shared<Robot::Sensors>();
   auto mutex = std::make_shared<std::mutex>();
   auto battery = std::make_shared<BatteryStateNode>(
