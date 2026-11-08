@@ -891,8 +891,16 @@ int main(int argc, char **argv)
     std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Wait 10 milliseconds
   }
 
-  // Initialize additional nodes (commented out nodes can be enabled if needed).
-//   auto batteryStateNode = std::make_shared<BatteryStateNode>(sensorsPtr->mutable_batterystate(), "battery_state");
+  // Battery telemetry is optional. A missing/empty libconfig topic means no
+  // subscriber and no fabricated battery snapshot in the legacy Sensors wire.
+  std::shared_ptr<BatteryStateNode> batteryStateNode;
+  std::string battery_topic;
+  ConfigProcessor battery_config(robot_config_path);
+  if (battery_config.searchString("Amur.API.battery_topic", battery_topic) == EXIT_SUCCESS &&
+      !battery_topic.empty()) {
+    batteryStateNode = std::make_shared<BatteryStateNode>(
+      sensorsPtr, network->getClientInstance()->getMutex(), battery_topic);
+  }
   auto mapNode = std::make_shared<MapNode>(mapPtr, "/map", "/mapannotator/rc_agent_zones",
                                            network->getClientInstance()->getMapMutex());
   auto baseControlNode = std::make_shared<BaseControlNode>(
@@ -913,7 +921,9 @@ int main(int argc, char **argv)
   executor.add_node(pipelineReceiverNode);
   executor.add_node(relayNode);
   executor.add_node(videoControlNode);
-//   executor.add_node(batteryStateNode);
+  if (batteryStateNode) {
+    executor.add_node(batteryStateNode);
+  }
   executor.add_node(mapNode);
   executor.add_node(baseControlNode);
   executor.add_node(navigatorNode);
