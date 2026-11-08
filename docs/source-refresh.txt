@@ -1,3 +1,3 @@
-# P1 gRPC cancellation source refresh
-source_revision=598c6da8efd42bd0de120c7947f2c2a776677019
-source_ci=https://github.com/ARDev1161/rc_agent/actions/runs/42441827514
+# P1 coherent legacy map snapshot transport
+source_revision=403d499735f5b996ee86011c0ee459569d05de11
+source_ci=https://github.com/ARDev1161/rc_agent/actions/runs/42444234818

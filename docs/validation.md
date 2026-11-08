@@ -55,3 +55,10 @@ The P1 gateway transport now respects `tryConnectIfFailed` in legacy unary and s
 The [new mock integration test](https://github.com/ARDev1161/rc_agent/blob/feat/rc-api-v2/tests/grpc_client_smoke.cpp) withholds a response and verifies the client exits the blocking read, reports cancellation, retains the previous controls and cannot silently restart. The paired real-server test is under [AmurCore](https://github.com/ARDev1161/AmurCore/blob/feat/rc-api-v2/tests/real_peer_smoke.cpp). [Source revision `598c6da8efd4`](https://github.com/ARDev1161/rc_agent/commit/598c6da8efd42bd0de120c7947f2c2a776677019), [current CI](https://github.com/ARDev1161/rc_agent/actions/runs/42441827514) — check completion before marking PASS.
 
 This is *transport lifecycle* only. It does not guarantee a stopped physical robot or implement the future P5 deadman/lease/watchdog.
+
+
+## P1 coherent map snapshots without network I/O under mutex — 2026-11-08
+
+The legacy `grpcClient::MapStream()` in [rc_agent](https://github.com/ARDev1161/rc_agent/blob/feat/rc-api-v2/network/client.cpp) now snapshots the map sequence and `GetMapResponse` payload under one `muMap` lock and performs gRPC `Write`/`Read` **outside** the lock. This removes a potential ROS2 map callback stall and sequence/payload race. As before, the agent compares only `map_seq`, **not full OccupancyGrid contents**. The Map, Pose and Zone stream loops now respect failed gRPC Write/Read to let the legacy retry policy handle disconnections.
+
+The cross-repo real-peer CI test verifies the initial map and a changed map sequence with independent objects, then cancellation. [Source 403d499735f5](https://github.com/ARDev1161/rc_agent/commit/403d499735f5b996ee86011c0ee459569d05de11) · [CI 42444234818](https://github.com/ARDev1161/rc_agent/actions/runs/42444234818). Verify this CI's result before claiming success. P1 manual hardware and UI gates remain outstanding; P5 changed-only telemetry beyond the legacy map sequence and video-selection policy have not been implemented.
