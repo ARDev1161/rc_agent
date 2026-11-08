@@ -196,3 +196,9 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - Tested peer `956f2b970885c65664067f8a5a84eea2dc080a91`; both projects compile real peer implementations over unchanged legacy gRPC and mirrored Protobuf.
 - Docs source changes only in separate `documentation` branch, SHA `5690aff05a2d4fc02c89b8a75cfca37941aa0e04`, [Pages CI #42435184232](https://github.com/ARDev1161/rc_agent/actions/runs/42435184232) **pending at handoff**; check deployment and fix if red. The documentation tree must remain isolated and must not be merged to source branches.
 - P1 still **IN PROGRESS**. Headless CI does not validate actual operator GUI workflow, physical joystick, hardware/VPN, Nav2/TF/map/video, safety watchdog or end-to-end lifecycle. Manual P1-01..08 remain **NOT RUN**; no P2 or default branch changes. Stream `stopStream()` still cannot cancel a blocking gRPC Read; atomic flag prevents retry only after the read unblocks. Do not claim fully resilient teleop until the P5 safety gates are implemented.
+
+
+### Verified docs and code CI handoff — 2026-11-08
+- Source/test SHA `29cda7bf4a390bb5f672feacdbcd4f70d880588a`: [RC API v2 CI #42435001800](https://github.com/ARDev1161/rc_agent/actions/runs/42435001800) **SUCCESS** (all 5 jobs).
+- Docs-only SHA `5690aff05a2d4fc02c89b8a75cfca37941aa0e04`: [GitHub Pages CI #42435184232](https://github.com/ARDev1161/rc_agent/actions/runs/42435184232) **SUCCESS** (Sphinx/Doxygen isolation + Pages deploy).
+- These success claims are scoped to exact source and docs revisions; plan-only handoff commit does not rerun source CI because workflows filter paths. P1 manual hardware/GUI/VPN/Nav2/GStreamer gates remain **NOT RUN**. Next permitted work: additional targeted P1 reliability tests or manual P1 acceptance; do not implement P2 until approved gate passes. Do not merge documentation or source feature branches.
