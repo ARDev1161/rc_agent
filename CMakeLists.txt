@@ -90,6 +90,19 @@ add_executable(${PROJECT_NAME}
   ${MODULES}
 )
 
+if(BUILD_TESTING)
+  ament_add_gtest(battery_freshness_test
+    test/unit_tests/battery_freshness_test.cpp
+    modules/battery/battery_state_node.cpp
+    modules/battery/battery_state_handler.cpp
+  )
+  if(TARGET battery_freshness_test)
+    target_include_directories(battery_freshness_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    ament_target_dependencies(battery_freshness_test rclcpp sensor_msgs)
+    target_link_libraries(battery_freshness_test RobotProtos)
+  endif()
+endif()
+
 ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   sensor_msgs
