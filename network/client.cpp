@@ -40,21 +40,24 @@ grpc::Status runStreamWithRetry(const std::string &stream_name,
 
         stream->WritesDone();
         status = stream->Finish();
-        if (status.ok()) {
-            return status;
-        } else {
+        // An OK Finish after peer EOF is still a closed live stream.
+        // Reconnect when requested, but preserve one-shot and explicit stop.
+        if (status.ok() && (!retry_enabled || stopped_flag.load())) {
+            break;
+        }
+        if (!status.ok()) {
             std::cout << "Error " << status.error_code() << " : " << status.error_message() << std::endl;
             std::cout << stream_name << " rpc failed." << std::endl;
             if (!retry_enabled || stopped_flag.load()) {
                 break;
             }
-            constexpr int kSleepStepMs = 10;
-            for (int elapsed = 0;
-                 elapsed < retry_delay_ms && !stopped_flag.load();
-                 elapsed += kSleepStepMs) {
-                std::this_thread::sleep_for(
-                    std::chrono::milliseconds(std::min(kSleepStepMs, retry_delay_ms - elapsed)));
-            }
+        }
+        constexpr int kSleepStepMs = 10;
+        for (int elapsed = 0;
+             elapsed < retry_delay_ms && !stopped_flag.load();
+             elapsed += kSleepStepMs) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(std::min(kSleepStepMs, retry_delay_ms - elapsed)));
         }
     }
 
