@@ -243,3 +243,9 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 ### Completed documentation deployment for coherent map CI — 2026-11-08
 - [Documentation branch revision `97e2bcf0ebe182e2f7c4552fe900779d02b44de2`](https://github.com/ARDev1161/rc_agent/commit/97e2bcf0ebe182e2f7c4552fe900779d02b44de2): [Sphinx/Doxygen + Pages run 42444358908](https://github.com/ARDev1161/rc_agent/actions/runs/42444358908) **SUCCESS** including deployment, updated from tested source `403d499735f5b996ee86011c0ee459569d05de11`. This supersedes the earlier *QUEUED* handoff in this file.
 - Working-code [CI run 42444234818](https://github.com/ARDev1161/rc_agent/actions/runs/42444234818) **SUCCESS** on `403d499735f5b996ee86011c0ee459569d05de11`. No changes in this handoff to production code or mirrored protobuf. P1 remains IN PROGRESS until P1-01..08 live acceptance; P2 remains TODO.
+
+
+## P1 consistent legacy PoseStream and ZoneStream transport — 2026-11-08
+- Fixed rc_agent Pose/Zone stream factories holding `muMap` while creating the RPC. The map pointer is checked under the mutex, then the RPC is created outside it, matching the safe existing `MapStream` behavior.
+- Fixed `ZoneStream` reading `zone_seq` and zone payload under **different** mutex acquisitions. The sequence and zone state are now captured in one map lock; network `Write`/`Read` remain unlocked, no full zone/map scan or new protocol field.
+- Pair with AmurCore real-peer tests for initial and changed pose/zone data, independently of `MapStream`, and for cancellation of each. **CI PENDING for this source revision.** P1 manual physical/VPN/GUI/joystick/Nav2/GStreamer acceptance remains NOT RUN; P1 IN PROGRESS and P2 TODO.

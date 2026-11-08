@@ -250,9 +250,11 @@ grpc::Status grpcClient::PoseStream()
         [this](grpc::ClientContext &context) { return registerStreamContext(context); },
         [this](grpc::ClientContext &context) { unregisterStreamContext(context); },
         [this](grpc::ClientContext &context) {
-            std::unique_lock<std::mutex> lock(*muMap);
-            if (!map_) {
-                return std::shared_ptr<grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest>>(nullptr);
+            {
+                std::lock_guard<std::mutex> lock(*muMap);
+                if (!map_) {
+                    return std::shared_ptr<grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest>>(nullptr);
+                }
             }
             return std::shared_ptr<grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest>>(
                 stub_->PoseStream(&context));
@@ -300,9 +302,11 @@ grpc::Status grpcClient::ZoneStream()
         [this](grpc::ClientContext &context) { return registerStreamContext(context); },
         [this](grpc::ClientContext &context) { unregisterStreamContext(context); },
         [this](grpc::ClientContext &context) {
-            std::unique_lock<std::mutex> lock(*muMap);
-            if (!map_) {
-                return std::shared_ptr<grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest>>(nullptr);
+            {
+                std::lock_guard<std::mutex> lock(*muMap);
+                if (!map_) {
+                    return std::shared_ptr<grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest>>(nullptr);
+                }
             }
             return std::shared_ptr<grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest>>(
                 stub_->ZoneStream(&context));
@@ -318,25 +322,19 @@ grpc::Status grpcClient::ZoneStream()
             {
                 bool changed = false;
                 {
-                    std::unique_lock<std::mutex> lock(*muMap);
-                    if (map_) {
-                        std::uint64_t seq = map_->zone_seq();
-                        if (!has_seq || seq != last_seq) {
-                            last_seq = seq;
-                            has_seq = true;
-                            changed = true;
-                        }
+                    // Bind the zone payload to the very sequence we observed.
+                    // Never perform RPC I/O with the map mutex held.
+                    std::lock_guard<std::mutex> lock(*muMap);
+                    if (map_ && (!has_seq || map_->zone_seq() != last_seq)) {
+                        *state.mutable_zone_map() = map_->zone_map();
+                        last_seq = map_->zone_seq();
+                        has_seq = true;
+                        changed = true;
                     }
                 }
                 if (!changed) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(idle_sleep_ms));
                     continue;
-                }
-                {
-                    std::unique_lock<std::mutex> lock(*muMap);
-                    if (map_) {
-                        *state.mutable_zone_map() = map_->zone_map();
-                    }
                 }
                 if (!stream.Write(state) || !stream.Read(&request)) {
                     break;
