@@ -174,3 +174,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 ## P1 real-peer CI gate (2026-11-08)
 - New real-peer-grpc-loopback job compiles BOTH real AmurCore server and rc_agent client together using mirrored proto, runs the shared AmurCore scenario on ephemeral localhost with legacy/v2/legacy/reconnect snapshots, and fails on lost controls/descriptor or callback mutex blocking.
 - Both repositories have the same test job; this branch checks out the other peer at feat/rc-api-v2. No production endpoints, proto, ROS2 bindings or motor control changed. CI is PENDING until both jobs finish; hardware acceptance P1-01..08 remains NOT RUN, P1 IN PROGRESS.
+
+
+## Verified P1 cross-repository real-peer CI — 2026-11-08
+- Tested source+CI revision `41db27715aa2e453742fb712b548b7bcdfe51dd2`: [RC API v2 workflow #42432945859](https://github.com/ARDev1161/rc_agent/actions/runs/42432945859) **SUCCESS** on that exact SHA. All 5 jobs pass: complete ROS2 Humble colcon build/test, protobuf, config GTests, existing client/mock loopback, and real rc_agent client ↔ AmurCore server integration.
+- Paired real peer source/CI revision `8da7cc1303fb7e6687e7f889792bc260d771a309`. New integration job verifies legacy controls, v2 robot capabilities/axes over the unchanged RPC, legacy-after-v2 clearing, fresh-channel reconnect and nonblocking sensor callbacks. Initial CI attempts exposed build-time header-name collisions and were corrected explicitly; no production code or proto changed.
+- Updated documentation in the separate documentation branch: [Pages run #42432873508](https://github.com/ARDev1161/rc_agent/actions/runs/42432873508) SUCCESS. Documentation will refresh its displayed source revision to this tested source SHA.
+- **Acceptance**: P1 remains IN PROGRESS. These are headless in-process loopback tests, not hardware/VPN/real joystick/Nav2/map/GStreamer acceptance. Execute P1-01 through P1-08 and capture actual results before starting P2. No merges to dev/master.
