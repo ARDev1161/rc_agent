@@ -362,3 +362,9 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - Docs-only `documentation` SHA `c47b43eeab40b044568ea2a48ca8d8f3251bc580`: [Sphinx + Doxygen + Pages #42503817105](https://github.com/ARDev1161/rc_agent/actions/runs/42503817105) **SUCCESS**, including publishing. Doc branch remains isolated from C++ branches.
 - This handoff is PLAN.md-only; the preceding source SHA is the verified code, not this successor commit. No P2, no merge to dev/master.
 - **P1 IN PROGRESS:** real robot/VPN/joystick/Qt operator interactions/Nav2/OccupancyGrid visualization/live GStreamer and old↔new live manual checks **NOT RUN**, P1-01–P1-08 outstanding. The test validates video pipeline metadata synchronization, NOT actual capture/playback or P5 video gating. Next: manual simulator/robot acceptance; if unavailable, only work on specifically evidenced P1 correctness defects, not P2.
+
+
+### P1 handoff — 2026-11-08 clean stream EOF regression
+- rc_agent feature commits: [f93039b0](https://github.com/ARDev1161/rc_agent/commit/f93039b0bea13fceae8b73495f45f3335af19cbb) reconnects when a peer ends a bidirectional stream with OK and retry is enabled; [0c10f902](https://github.com/ARDev1161/rc_agent/commit/0c10f902170a1f2331cfb6f74f58c72bb1862b9d) adds deterministic loopback coverage for a fresh RobotInfo after clean EOF and explicit stop. No shared proto changes; AmurCore production sources unchanged.
+- CI for these new commits: PENDING/NOT YET VERIFIED (historical green runs are not evidence for these SHA). Locally ROS2/Qt5 builds NOT RUN in this environment. Verify current feature-head workflow jobs and fix failures before declaring this regression complete.
+- Phase remains P1 IN PROGRESS. P1-01..08 hardware/VPN/joystick/Nav2/map/GStreamer/legacy live smoke still OPEN; P2 blocked by P1 acceptance. Next: check rc_agent current HEAD CI, then test stream reconnect and snapshot with real robot when available.
