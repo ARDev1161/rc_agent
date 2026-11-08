@@ -95,6 +95,9 @@ grpcClient::grpcClient(std::shared_ptr<grpc::Channel> channel,
 grpc::Status grpcClient::DataExchange()
 {
     for (;;) {
+        if (stoppedStream.load()) {
+            return grpc::Status(grpc::StatusCode::CANCELLED, "Client was stopped");
+        }
         Sensors snapshot;
         {
             std::lock_guard<std::mutex> lock(*muClient);
@@ -103,10 +106,22 @@ grpc::Status grpcClient::DataExchange()
         // Bound each attempt and never hold ROS callback mutex across I/O.
         Controls reply;
         grpc::ClientContext context;
+        if (!registerStreamContext(context)) {
+            return grpc::Status(grpc::StatusCode::CANCELLED, "Client was stopped");
+        }
+        // Registration also lets stopStream interrupt an in-flight unary RPC.
+        auto unregister = [this](grpc::ClientContext &ctx) { unregisterStreamContext(ctx); };
+        ActiveContextGuard<decltype(unregister)> context_guard{context, unregister};
         context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
         grpc::Status status = stub_->DataExchange(&context, snapshot, &reply);
+        if (stoppedStream.load()) {
+            return grpc::Status(grpc::StatusCode::CANCELLED, "Client was stopped");
+        }
         if (status.ok()) {
             std::lock_guard<std::mutex> lock(*muClient);
+            if (stoppedStream.load()) {
+                return grpc::Status(grpc::StatusCode::CANCELLED, "Client was stopped");
+            }
             *controls_ = std::move(reply);
             return status;
         }
@@ -114,7 +129,13 @@ grpc::Status grpcClient::DataExchange()
         if (!retryConnect) {
             return status;
         }
-        std::this_thread::sleep_for(std::chrono::milliseconds(retryDelayMilliseconds));
+        constexpr int kSleepStepMs = 10;
+        for (int elapsed = 0;
+             elapsed < retryDelayMilliseconds && !stoppedStream.load();
+             elapsed += kSleepStepMs) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(
+                std::min(kSleepStepMs, retryDelayMilliseconds - elapsed)));
+        }
     }
 }
 
