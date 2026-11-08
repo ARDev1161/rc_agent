@@ -45,4 +45,13 @@ The P1 gateway transport now respects `tryConnectIfFailed` in legacy unary and s
 
 [Source tested at **29cda7bf4a39**](https://github.com/ARDev1161/rc_agent/commit/29cda7bf4a390bb5f672feacdbcd4f70d880588a) — [CI run](https://github.com/ARDev1161/rc_agent/actions/runs/42435001800) **SUCCESS** (all five jobs, including real peer and ROS2 Humble).
 
-**Limitations:** streaming operations blocked inside a gRPC Read are not yet externally cancelable by `stopStream()`; the atomic stop flag only prevents further retries once the RPC returns. P5 teleop watchdog, lease/session and actuator safety remain out of P1.
+**Safety boundary:** a canceled gRPC stream does not itself stop physical actuators. P5 teleop watchdog, lease/session and deadman protections remain out of P1.
+
+
+## P1: canceling a blocked legacy gRPC stream (2026-11-08)
+
+`grpcClient::stopStream()` now marks an instance terminal and invokes `TryCancel()` for each registered live gRPC `ClientContext`. Registration and removal are mutex protected; it applies to data, map, pose and zone streaming. Retry backoff checks for shutdown in short intervals. Reconnection after an explicit stop creates a **new** gateway client instance.
+
+The [new mock integration test](https://github.com/ARDev1161/rc_agent/blob/feat/rc-api-v2/tests/grpc_client_smoke.cpp) withholds a response and verifies the client exits the blocking read, reports cancellation, retains the previous controls and cannot silently restart. The paired real-server test is under [AmurCore](https://github.com/ARDev1161/AmurCore/blob/feat/rc-api-v2/tests/real_peer_smoke.cpp). [Source revision `598c6da8efd4`](https://github.com/ARDev1161/rc_agent/commit/598c6da8efd42bd0de120c7947f2c2a776677019), [current CI](https://github.com/ARDev1161/rc_agent/actions/runs/42441827514) — check completion before marking PASS.
+
+This is *transport lifecycle* only. It does not guarantee a stopped physical robot or implement the future P5 deadman/lease/watchdog.
