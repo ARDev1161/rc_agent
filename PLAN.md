@@ -264,3 +264,9 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - Test [b05bab6d](https://github.com/ARDev1161/rc_agent/commit/b05bab6d1340d3de4ed9bd1bd63ef460f327b27b): mock operator deliberately blocks unary reply; stopStream must unblock it with CANCELLED, reject later unary attempts, and preserve previous controls. Paired AmurCore real-peer test at [60a6dd9e](https://github.com/ARDev1161/AmurCore/commit/60a6dd9e7f3261deb5a73ef1a539af7fac0a2f64) checks stopped unary behavior with the real peer.
 - GitHub Actions [#42450762717](https://github.com/ARDev1161/rc_agent/actions/runs/42450762717) was IN PROGRESS at this handoff; do not claim success before inspecting final jobs. Local ROS2/Qt builds NOT RUN in this environment. P1-01..08 physical/VPN/GUI/Nav2/map/video/legacy live acceptance NOT RUN; P1 remains IN PROGRESS and P2 TODO.
 - Next: inspect latest feature-head CI and fix any red job; verify AmurCore paired CI and documentation source revision in separate documentation branch. No dev/master merges.
+
+
+### P1 unary cancellation CI verified — 2026-11-08
+- Feature source/test revision `b05bab6d1340d3de4ed9bd1bd63ef460f327b27b` passed [Actions #42450762717](https://github.com/ARDev1161/rc_agent/actions/runs/42450762717): 5/5 jobs SUCCESS (ROS2 Humble colcon build/test, config GTests, protobuf, mock grpc-client-loopback, real AmurCore↔rc_agent gRPC). This supersedes the earlier PENDING handoff; branch also has a PLAN-only successor.
+- Paired AmurCore [#42450768529](https://github.com/ARDev1161/AmurCore/actions/runs/42450768529): 3/3 jobs SUCCESS. Transport cancellation is not a robot stop/watchdog proof.
+- P1 IN PROGRESS, P1-01..P1-08 manual gates NOT RUN; P2 TODO. No source/proto/default branch changes in this CI verification handoff. Next: targeted simulator/live acceptance; documentation remains isolated in `documentation`.
