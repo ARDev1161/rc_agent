@@ -155,3 +155,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - Shared proto and legacy wire definitions **unchanged**. The above are test-only changes, not proof of real robot behavior.
 - CI: check latest feature HEAD after this PLAN commit and record actual job outcomes; prior green runs are historical, not evidence for these new commits. Local Qt5/ROS2 builds and physical/VPN/Nav2/GStreamer tests: **NOT RUN** in this tool environment.
 - Next: review feature HEAD CI jobs, fix any regression; then execute P1-01 through P1-08 with the physical robot or approved equivalent and record evidence. Do not mark P1 DONE without manual acceptance.
+
+
+## P1 gRPC loopback regression fix — 2026-11-08
+- Before fix, [rc_agent CI #42429638780](https://github.com/ARDev1161/rc_agent/actions/runs/42429638780) failed only `grpc-client-loopback` (20s timeout after `Client started`); protobuf, config and ROS2 Humble jobs succeeded. Root cause in `tests/grpc_client_smoke.cpp`: `OperatorMock::capture()` recursively called itself while holding `observed_mutex` instead of assigning `observed_robot_id`, causing deadlock.
+- Replaced recursion with capture of the stable ID and reset of observed capability/axis before every snapshot; streaming uses the same mutex-protected capture. Added a legacy-after-v2 unary regression proving no old descriptor leaks across the same client session.
+- Scope: P1 automated transport test only. Production client, protobuf wire and user-facing behavior unchanged. **CI pending for the fixing commit** at time of authorship; check actual `feat/rc-api-v2` HEAD run and fix any remaining red jobs.
+- Do not infer physical robot/VPN/Nav2/GStreamer behavior from loopback; P1 stays **IN PROGRESS** pending P1-01..08 acceptance.

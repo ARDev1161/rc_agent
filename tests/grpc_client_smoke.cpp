@@ -27,7 +27,9 @@ public:
 
     void capture(const Robot::Sensors &incoming) {
         std::lock_guard<std::mutex> lock(observed_mutex);
-        capture(incoming);
+        observed_robot_id = incoming.robot_info().robot_id();
+        observed_capability.clear();
+        observed_axis.clear();
         if (incoming.robot_info().capabilities_size() > 0) {
             const auto &cap = incoming.robot_info().capabilities(0);
             observed_capability = cap.id();
@@ -58,7 +60,7 @@ public:
         if (!stream->Read(&incoming)) {
             return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Missing telemetry");
         }
-        observed_robot_id = incoming.robot_info().robot_id();
+        capture(incoming);
         received = true;
         while (!release_reply.load() && !ctx->IsCancelled()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -138,11 +140,27 @@ int main() {
                 "Client stream did not finish after server sent reply");
         require(rpc.get().ok(), "Client stream RPC failed");
         require(available, "ROS mutex blocked by gRPC response wait");
-        require(mock.matchesDescriptor(), "Stream lost robot ID");
+        require(mock.matchesDescriptor(), "Stream lost robot ID or capability/axes");
         {
             std::lock_guard<std::mutex> lock(*mutex);
             require(controls->basecontrol().linearvelocity() == 11.0,
                     "Stream controls were not applied");
+        }
+
+        // A legacy snapshot must clear metadata observed on the previous
+        // v2 unary/stream. The mock must never retain stale capabilities.
+        {
+            auto client_mutex = client.getMutex();
+            std::lock_guard<std::mutex> lock(*client_mutex);
+            sensors->clear_robot_info();
+        }
+        require(client.DataExchange().ok(), "Legacy unary reconnect failed");
+        {
+            std::lock_guard<std::mutex> lock(mock.observed_mutex);
+            require(mock.observed_robot_id.empty() &&
+                        mock.observed_capability.empty() &&
+                        mock.observed_axis.empty(),
+                    "Legacy reconnect retained stale RobotInfo fields");
         }
     } catch (const std::exception &e) {
         mock.release_reply = true;
