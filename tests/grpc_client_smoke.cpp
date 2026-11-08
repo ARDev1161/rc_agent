@@ -19,6 +19,9 @@ void require(bool good, const char *message) {
 class OperatorMock final : public Robot::ClientOnRobot::Service {
 public:
     std::atomic<bool> received{false};
+    std::atomic<bool> fail_next_unary{false};
+    std::atomic<bool> fail_next_stream{false};
+    std::atomic<unsigned> unary_count{0};
     std::atomic<bool> release_reply{false};
     std::mutex observed_mutex;
     std::string observed_robot_id;
@@ -48,6 +51,10 @@ public:
     grpc::Status DataExchange(grpc::ServerContext *,
                               const Robot::Sensors *incoming,
                               Robot::Controls *reply) override {
+        ++unary_count;
+        if (fail_next_unary.exchange(false)) {
+            return grpc::Status(grpc::StatusCode::UNAVAILABLE, "Simulated disconnect");
+        }
         capture(*incoming);
         reply->mutable_basecontrol()->set_linearvelocity(11.0);
         return grpc::Status::OK;
@@ -59,6 +66,9 @@ public:
         Robot::Sensors incoming;
         if (!stream->Read(&incoming)) {
             return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Missing telemetry");
+        }
+        if (fail_next_stream.exchange(false)) {
+            return grpc::Status(grpc::StatusCode::UNAVAILABLE, "Simulated stream disconnect");
         }
         capture(incoming);
         received = true;
@@ -162,6 +172,61 @@ int main() {
                         mock.observed_axis.empty(),
                     "Legacy reconnect retained stale RobotInfo fields");
         }
+        // False means one attempt, error propagation and no stale controls.
+        mock.fail_next_unary = true;
+        unsigned before = mock.unary_count.load();
+        auto start = std::chrono::steady_clock::now();
+        const grpc::Status failed = client.DataExchange();
+        require(failed.error_code() == grpc::StatusCode::UNAVAILABLE,
+                "One-shot unary did not propagate disconnect");
+        require(mock.unary_count.load() == before + 1,
+                "One-shot unary retried unexpectedly");
+        require(std::chrono::steady_clock::now() - start < std::chrono::seconds(3),
+                "One-shot unary did not fail promptly");
+        {
+            std::lock_guard<std::mutex> lock(*client.getMutex());
+            require(controls->basecontrol().linearvelocity() == 11.0,
+                    "Failed unary overwrote a valid control reply");
+        }
+
+        // One transient failure must recover when retry is enabled,
+        // without blocking ROS callback access during the backoff.
+        grpcClient retrying(channel, controls, sensors, map, true);
+        mock.fail_next_unary = true;
+        before = mock.unary_count.load();
+        auto pending = std::async(std::launch::async, [&retrying]() {
+            return retrying.DataExchange();
+        });
+        for (int i = 0; i < 100 && mock.unary_count.load() == before; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        require(mock.unary_count.load() == before + 1,
+                "Retrying client did not start");
+        bool unlocked = false;
+        for (int i = 0; i < 40; ++i) {
+            if (retrying.getMutex()->try_lock()) {
+                retrying.getMutex()->unlock();
+                unlocked = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        require(unlocked, "Retry backoff held ROS mutex");
+        require(pending.wait_for(std::chrono::seconds(5)) == std::future_status::ready,
+                "Retry after transient disconnect timed out");
+        require(pending.get().ok(), "Retry-enabled unary did not recover");
+        require(mock.unary_count.load() == before + 2,
+                "Retry-enabled unary performed unexpected extra attempts");
+
+        // The streaming transport must obey the same one-shot policy.
+        mock.fail_next_stream = true;
+        grpcClient one_shot_stream(channel, controls, sensors, map, false);
+        start = std::chrono::steady_clock::now();
+        const grpc::Status stream_failed = one_shot_stream.DataStreamExchange();
+        require(stream_failed.error_code() == grpc::StatusCode::UNAVAILABLE,
+                "One-shot stream did not surface peer failure");
+        require(std::chrono::steady_clock::now() - start < std::chrono::seconds(3),
+                "One-shot stream retried or blocked unexpectedly");
     } catch (const std::exception &e) {
         mock.release_reply = true;
         server->Shutdown();
