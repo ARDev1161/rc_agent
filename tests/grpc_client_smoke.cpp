@@ -250,6 +250,26 @@ int main() {
                     "Battery-less unary snapshot lost RobotInfo");
         }
 
+        // Recovering battery telemetry must be reflected in the next full
+        // snapshot, without disturbing stable robot identity/capabilities.
+        {
+            std::lock_guard<std::mutex> lock(*client.getMutex());
+            sensors->mutable_batterystate()->set_percentage(0.375f);
+            sensors->mutable_batterystate()->set_present(true);
+        }
+        require(client.DataExchange().ok(), "Restored battery unary exchange failed");
+        {
+            std::lock_guard<std::mutex> lock(mock.observed_mutex);
+            require(mock.observed_battery &&
+                        mock.observed_battery_percentage > 0.374f &&
+                        mock.observed_battery_percentage < 0.376f,
+                    "Restored battery telemetry was not updated");
+            require(mock.observed_robot_id == "robot-test" &&
+                        mock.observed_capability == "manual.velocity" &&
+                        mock.observed_axis == "linear.x",
+                    "Restored battery snapshot lost RobotInfo");
+        }
+
         // Use a *fresh*, potentially CONNECTING channel to catch the startup
         // race where GetState() gating previously skipped the first snapshot.
         auto stream_channel = grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
