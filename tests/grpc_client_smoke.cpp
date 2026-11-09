@@ -62,6 +62,7 @@ public:
     }
 
     std::atomic<unsigned> pose_snapshots{0};
+    std::atomic<bool> close_next_pose{false};
     std::atomic<unsigned> zone_snapshots{0};
 
     grpc::Status PoseStream(
@@ -75,6 +76,7 @@ public:
         ++pose_snapshots;
         map_service::PoseRequest reply;
         if (!stream->Write(reply)) return grpc::Status::OK;
+        if (close_next_pose.exchange(false)) return grpc::Status::OK;
         while (!ctx->IsCancelled()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
@@ -362,6 +364,42 @@ int main() {
         require(pose_finished, "Idle pose stream did not stop");
         require(pose_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
                 "Idle pose stream did not report cancellation");
+
+        // A clean server EOF must not force retransmission of an unchanged
+        // pose. A subsequent pose change must cause the closed RPC to be
+        // detected, followed by a fresh snapshot on the replacement stream.
+        mock.close_next_pose.store(true);
+        const unsigned pose_before = mock.pose_snapshots.load();
+        grpcClient pose_reconnect(channel, controls, sensors, map, true);
+        auto pose_reconnect_rpc = std::async(std::launch::async, [&pose_reconnect]() {
+            return pose_reconnect.PoseStream();
+        });
+        for (int i = 0; i < 300 && mock.pose_snapshots.load() == pose_before; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool first_pose_sent = mock.pose_snapshots.load() == pose_before + 1;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const bool pose_not_repeated = mock.pose_snapshots.load() == pose_before + 1;
+        {
+            std::lock_guard<std::mutex> lock(*pose_reconnect.getMapMutex());
+            map->mutable_robotpose()->set_position_x(
+                map->robotpose().position_x() + 1.0);
+        }
+        for (int i = 0; i < 1000 &&
+             mock.pose_snapshots.load() < pose_before + 2; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool updated_pose_sent = mock.pose_snapshots.load() >= pose_before + 2;
+        pose_reconnect.stopStream();
+        const bool pose_reconnect_finished =
+            pose_reconnect_rpc.wait_for(std::chrono::seconds(3)) ==
+            std::future_status::ready;
+        require(first_pose_sent, "Clean-EOF pose test missed initial snapshot");
+        require(pose_not_repeated, "Unchanged pose was retransmitted after EOF");
+        require(updated_pose_sent, "Pose change did not reconnect after peer EOF");
+        require(pose_reconnect_finished, "Pose reconnect did not stop");
+        require(pose_reconnect_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Pose reconnect did not report explicit shutdown");
 
         grpcClient idle_zone(channel, controls, sensors, map, true);
         auto zone_rpc = std::async(std::launch::async, [&idle_zone]() {
