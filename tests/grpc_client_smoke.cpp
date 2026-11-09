@@ -601,6 +601,24 @@ int main() {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
         const bool no_duplicate_live_zone =
             mock.zone_snapshots.load() == live_zone_before + 2;
+        // The same open RPC must also recover from an empty ZoneMap to a
+        // newly populated one, rather than treating empty as terminal.
+        {
+            std::lock_guard<std::mutex> lock(*live_zone_client.getMapMutex());
+            auto *zone = map->mutable_zone_map()->add_zones();
+            zone->set_id(67890);
+            map->set_zone_seq(map->zone_seq() + 1);
+        }
+        for (int i = 0; i < 300 &&
+             mock.zone_snapshots.load() < live_zone_before + 3; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool live_restored = mock.zone_snapshots.load() == live_zone_before + 3 &&
+                                   mock.last_zone_count.load() == 1 &&
+                                   mock.last_zone_id.load() == 67890;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const bool no_duplicate_restored_zone =
+            mock.zone_snapshots.load() == live_zone_before + 3;
         live_zone_client.stopStream();
         const bool live_zone_stopped =
             live_zone_rpc.wait_for(std::chrono::seconds(3)) ==
@@ -608,6 +626,8 @@ int main() {
         mock.accept_zone_updates.store(false);
         require(live_populated, "Live ZoneStream missed populated map");
         require(live_empty, "Live ZoneStream did not clear zones on same RPC");
+        require(live_restored, "Live ZoneStream did not restore zones on same RPC");
+        require(no_duplicate_restored_zone, "Live ZoneStream repeated restored zones");
         require(no_duplicate_live_zone, "Live ZoneStream repeated unchanged zones");
         require(live_zone_stopped, "Live ZoneStream did not cancel");
         require(live_zone_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
