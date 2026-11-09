@@ -34,6 +34,8 @@ public:
     float observed_battery_percentage{0.0f};
 
     std::atomic<unsigned> map_snapshots{0};
+    std::atomic<bool> close_next_map{false};
+    std::atomic<std::uint64_t> last_map_seq{0};
     grpc::Status MapStream(
         grpc::ServerContext *ctx,
         grpc::ServerReaderWriter<map_service::GetMapRequest,
@@ -42,10 +44,14 @@ public:
         if (!stream->Read(&incoming)) {
             return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Missing map snapshot");
         }
+        last_map_seq.store(incoming.map_seq());
         ++map_snapshots;
         map_service::GetMapRequest reply;
         if (!stream->Write(reply)) {
             return grpc::Status::OK;
+        }
+        if (close_next_map.exchange(false)) {
+            return grpc::Status::OK;  // Simulate a clean peer-side EOF.
         }
         // Leave the RPC idle after the first map snapshot. A client shutdown
         // must interrupt the stream without requiring another map update.
@@ -262,6 +268,41 @@ int main() {
         require(map_stopped, "Idle map stream did not stop after cancellation");
         require(idle_map_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
                 "Idle map stream did not report explicit cancellation");
+
+        // A clean peer EOF while the map is unchanged must not cause an
+        // unchanged map to be retransmitted. Once map_seq advances, the
+        // client must detect the closed RPC and reconnect with a fresh snapshot.
+        mock.close_next_map.store(true);
+        const unsigned map_before = mock.map_snapshots.load();
+        grpcClient map_reconnect(channel, controls, sensors, map, true);
+        auto reconnect_rpc = std::async(std::launch::async, [&map_reconnect]() {
+            return map_reconnect.MapStream();
+        });
+        for (int i = 0; i < 300 && mock.map_snapshots.load() == map_before; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool first_map_sent = mock.map_snapshots.load() == map_before + 1;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const bool no_idle_retransmit = mock.map_snapshots.load() == map_before + 1;
+        {
+            std::lock_guard<std::mutex> lock(*map_reconnect.getMapMutex());
+            map->set_map_seq(map->map_seq() + 1);
+        }
+        for (int i = 0; i < 1000 && mock.map_snapshots.load() < map_before + 2; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool fresh_map_sent = mock.map_snapshots.load() >= map_before + 2;
+        const bool correct_map_seq = mock.last_map_seq.load() == map->map_seq();
+        map_reconnect.stopStream();
+        const bool reconnect_stopped = reconnect_rpc.wait_for(std::chrono::seconds(3)) ==
+                                       std::future_status::ready;
+        require(first_map_sent, "Clean-EOF map test missed initial snapshot");
+        require(no_idle_retransmit, "Unchanged map was retransmitted after EOF");
+        require(fresh_map_sent, "Map change did not reconnect after peer EOF");
+        require(correct_map_seq, "Reconnected map snapshot had stale sequence");
+        require(reconnect_stopped, "Map reconnect did not stop");
+        require(reconnect_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Map reconnect did not report explicit shutdown");
 
         // A legacy snapshot must clear metadata observed on the previous
         // v2 unary/stream. The mock must never retain stale capabilities.
