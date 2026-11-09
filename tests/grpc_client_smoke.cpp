@@ -65,6 +65,7 @@ public:
     std::atomic<bool> close_next_pose{false};
     std::atomic<unsigned> zone_snapshots{0};
     std::atomic<bool> close_next_zone{false};
+    std::atomic<std::uint64_t> last_zone_id{0};
 
     grpc::Status PoseStream(
         grpc::ServerContext *ctx,
@@ -92,6 +93,8 @@ public:
         if (!stream->Read(&incoming)) {
             return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Missing zone snapshot");
         }
+        last_zone_id.store(incoming.zone_map().zones_size() > 0
+                               ? incoming.zone_map().zones(0).id() : 0);
         ++zone_snapshots;
         map_service::ZoneRequest reply;
         if (!stream->Write(reply)) return grpc::Status::OK;
@@ -439,6 +442,10 @@ int main() {
         const bool zone_not_repeated = mock.zone_snapshots.load() == zone_before + 1;
         {
             std::lock_guard<std::mutex> lock(*zone_reconnect.getMapMutex());
+            auto *zone = map->mutable_zone_map()->zones_size() == 0
+                ? map->mutable_zone_map()->add_zones()
+                : map->mutable_zone_map()->mutable_zones(0);
+            zone->set_id(9001);
             map->set_zone_seq(map->zone_seq() + 1);
         }
         for (int i = 0; i < 1000 &&
@@ -446,6 +453,7 @@ int main() {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
         const bool updated_zone_sent = mock.zone_snapshots.load() >= zone_before + 2;
+        const bool updated_zone_payload = mock.last_zone_id.load() == 9001;
         zone_reconnect.stopStream();
         const bool zone_reconnect_finished =
             zone_reconnect_rpc.wait_for(std::chrono::seconds(3)) ==
@@ -453,6 +461,7 @@ int main() {
         require(first_zone_sent, "Clean-EOF zone test missed initial snapshot");
         require(zone_not_repeated, "Unchanged zone was retransmitted after EOF");
         require(updated_zone_sent, "Zone change did not reconnect after peer EOF");
+        require(updated_zone_payload, "Reconnected zone snapshot had stale payload");
         require(zone_reconnect_finished, "Zone reconnect did not stop");
         require(zone_reconnect_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
                 "Zone reconnect did not report explicit shutdown");
