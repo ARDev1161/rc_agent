@@ -61,6 +61,43 @@ public:
         return grpc::Status(grpc::StatusCode::CANCELLED, "Client stopped");
     }
 
+    std::atomic<unsigned> pose_snapshots{0};
+    std::atomic<unsigned> zone_snapshots{0};
+
+    grpc::Status PoseStream(
+        grpc::ServerContext *ctx,
+        grpc::ServerReaderWriter<map_service::PoseRequest,
+                                 map_service::PoseState> *stream) override {
+        map_service::PoseState incoming;
+        if (!stream->Read(&incoming)) {
+            return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Missing pose snapshot");
+        }
+        ++pose_snapshots;
+        map_service::PoseRequest reply;
+        if (!stream->Write(reply)) return grpc::Status::OK;
+        while (!ctx->IsCancelled()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return grpc::Status(grpc::StatusCode::CANCELLED, "Client stopped");
+    }
+
+    grpc::Status ZoneStream(
+        grpc::ServerContext *ctx,
+        grpc::ServerReaderWriter<map_service::ZoneRequest,
+                                 map_service::ZoneState> *stream) override {
+        map_service::ZoneState incoming;
+        if (!stream->Read(&incoming)) {
+            return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Missing zone snapshot");
+        }
+        ++zone_snapshots;
+        map_service::ZoneRequest reply;
+        if (!stream->Write(reply)) return grpc::Status::OK;
+        while (!ctx->IsCancelled()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return grpc::Status(grpc::StatusCode::CANCELLED, "Client stopped");
+    }
+
     void capture(const Robot::Sensors &incoming) {
         std::lock_guard<std::mutex> lock(observed_mutex);
         observed_robot_id = incoming.robot_info().robot_id();
@@ -303,6 +340,48 @@ int main() {
         require(reconnect_stopped, "Map reconnect did not stop");
         require(reconnect_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
                 "Map reconnect did not report explicit shutdown");
+
+        // Pose and zone streams must also be cancellable while idle, without
+        // manufacturing changed telemetry to unblock a gRPC operation.
+        grpcClient idle_pose(channel, controls, sensors, map, true);
+        auto pose_rpc = std::async(std::launch::async, [&idle_pose]() {
+            return idle_pose.PoseStream();
+        });
+        for (int i = 0; i < 300 && mock.pose_snapshots.load() == 0; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool pose_sent = mock.pose_snapshots.load() == 1;
+        const bool pose_idle = pose_rpc.wait_for(std::chrono::milliseconds(100)) ==
+                               std::future_status::timeout;
+        idle_pose.stopStream();
+        const bool pose_finished = pose_rpc.wait_for(std::chrono::seconds(3)) ==
+                                   std::future_status::ready;
+        require(pose_sent, "Pose stream did not send initial snapshot");
+        require(pose_idle && mock.pose_snapshots.load() == 1,
+                "Unchanged pose was retransmitted");
+        require(pose_finished, "Idle pose stream did not stop");
+        require(pose_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Idle pose stream did not report cancellation");
+
+        grpcClient idle_zone(channel, controls, sensors, map, true);
+        auto zone_rpc = std::async(std::launch::async, [&idle_zone]() {
+            return idle_zone.ZoneStream();
+        });
+        for (int i = 0; i < 300 && mock.zone_snapshots.load() == 0; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool zone_sent = mock.zone_snapshots.load() == 1;
+        const bool zone_idle = zone_rpc.wait_for(std::chrono::milliseconds(100)) ==
+                               std::future_status::timeout;
+        idle_zone.stopStream();
+        const bool zone_finished = zone_rpc.wait_for(std::chrono::seconds(3)) ==
+                                   std::future_status::ready;
+        require(zone_sent, "Zone stream did not send initial snapshot");
+        require(zone_idle && mock.zone_snapshots.load() == 1,
+                "Unchanged zone was retransmitted");
+        require(zone_finished, "Idle zone stream did not stop");
+        require(zone_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Idle zone stream did not report cancellation");
 
         // A legacy snapshot must clear metadata observed on the previous
         // v2 unary/stream. The mock must never retain stale capabilities.
