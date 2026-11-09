@@ -232,6 +232,24 @@ int main() {
                     "Battery percentage was lost in existing Sensors transport");
         }
 
+        // A robot may stop reporting BatteryState (or have no battery at all).
+        // The next complete unary snapshot must clear its presence while
+        // retaining the independent v2 identity and capability descriptor.
+        {
+            std::lock_guard<std::mutex> lock(*client.getMutex());
+            sensors->clear_batterystate();
+        }
+        require(client.DataExchange().ok(), "Battery-less unary reconnect failed");
+        {
+            std::lock_guard<std::mutex> lock(mock.observed_mutex);
+            require(!mock.observed_battery,
+                    "Battery-less unary snapshot retained stale BatteryState");
+            require(mock.observed_robot_id == "robot-test" &&
+                    mock.observed_capability == "manual.velocity" &&
+                    mock.observed_axis == "linear.x",
+                    "Battery-less unary snapshot lost RobotInfo");
+        }
+
         // Use a *fresh*, potentially CONNECTING channel to catch the startup
         // race where GetState() gating previously skipped the first snapshot.
         auto stream_channel = grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
