@@ -64,6 +64,7 @@ public:
     std::atomic<unsigned> pose_snapshots{0};
     std::atomic<bool> close_next_pose{false};
     std::atomic<unsigned> zone_snapshots{0};
+    std::atomic<bool> close_next_zone{false};
 
     grpc::Status PoseStream(
         grpc::ServerContext *ctx,
@@ -94,6 +95,7 @@ public:
         ++zone_snapshots;
         map_service::ZoneRequest reply;
         if (!stream->Write(reply)) return grpc::Status::OK;
+        if (close_next_zone.exchange(false)) return grpc::Status::OK;
         while (!ctx->IsCancelled()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
@@ -420,6 +422,40 @@ int main() {
         require(zone_finished, "Idle zone stream did not stop");
         require(zone_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
                 "Idle zone stream did not report cancellation");
+
+        // The zone stream must recover from a clean server EOF only when
+        // zone_seq changes, without resending an unchanged zone snapshot.
+        mock.close_next_zone.store(true);
+        const unsigned zone_before = mock.zone_snapshots.load();
+        grpcClient zone_reconnect(channel, controls, sensors, map, true);
+        auto zone_reconnect_rpc = std::async(std::launch::async, [&zone_reconnect]() {
+            return zone_reconnect.ZoneStream();
+        });
+        for (int i = 0; i < 300 && mock.zone_snapshots.load() == zone_before; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool first_zone_sent = mock.zone_snapshots.load() == zone_before + 1;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const bool zone_not_repeated = mock.zone_snapshots.load() == zone_before + 1;
+        {
+            std::lock_guard<std::mutex> lock(*zone_reconnect.getMapMutex());
+            map->set_zone_seq(map->zone_seq() + 1);
+        }
+        for (int i = 0; i < 1000 &&
+             mock.zone_snapshots.load() < zone_before + 2; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool updated_zone_sent = mock.zone_snapshots.load() >= zone_before + 2;
+        zone_reconnect.stopStream();
+        const bool zone_reconnect_finished =
+            zone_reconnect_rpc.wait_for(std::chrono::seconds(3)) ==
+            std::future_status::ready;
+        require(first_zone_sent, "Clean-EOF zone test missed initial snapshot");
+        require(zone_not_repeated, "Unchanged zone was retransmitted after EOF");
+        require(updated_zone_sent, "Zone change did not reconnect after peer EOF");
+        require(zone_reconnect_finished, "Zone reconnect did not stop");
+        require(zone_reconnect_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Zone reconnect did not report explicit shutdown");
 
         // A legacy snapshot must clear metadata observed on the previous
         // v2 unary/stream. The mock must never retain stale capabilities.
