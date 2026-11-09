@@ -65,6 +65,7 @@ public:
     std::atomic<bool> close_next_pose{false};
     std::atomic<unsigned> zone_snapshots{0};
     std::atomic<bool> close_next_zone{false};
+    std::atomic<bool> accept_zone_updates{false};
     std::atomic<std::uint64_t> last_zone_id{0};
     std::atomic<int> last_zone_count{-1};
 
@@ -101,6 +102,17 @@ public:
         map_service::ZoneRequest reply;
         if (!stream->Write(reply)) return grpc::Status::OK;
         if (close_next_zone.exchange(false)) return grpc::Status::OK;
+        if (accept_zone_updates.load()) {
+            // Exercise changes on the SAME live RPC, not only fresh snapshots.
+            while (stream->Read(&incoming)) {
+                last_zone_count.store(incoming.zone_map().zones_size());
+                last_zone_id.store(incoming.zone_map().zones_size() > 0
+                                       ? incoming.zone_map().zones(0).id() : 0);
+                ++zone_snapshots;
+                if (!stream->Write(reply)) break;
+            }
+            return grpc::Status(grpc::StatusCode::CANCELLED, "Client stopped");
+        }
         while (!ctx->IsCancelled()) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
@@ -553,6 +565,53 @@ int main() {
         require(empty_zone_stopped, "Empty ZoneMap stream did not stop");
         require(empty_zone_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
                 "Empty ZoneMap shutdown did not report cancellation");
+
+        // Verify populated -> empty on one continuously open ZoneStream.
+        // A fresh client would only test the initial snapshot path.
+        {
+            std::lock_guard<std::mutex> lock(*client.getMapMutex());
+            auto *zone = map->mutable_zone_map()->add_zones();
+            zone->set_id(12345);
+            map->set_zone_seq(map->zone_seq() + 1);
+        }
+        mock.accept_zone_updates.store(true);
+        const unsigned live_zone_before = mock.zone_snapshots.load();
+        grpcClient live_zone_client(channel, controls, sensors, map, true);
+        auto live_zone_rpc = std::async(std::launch::async, [&live_zone_client]() {
+            return live_zone_client.ZoneStream();
+        });
+        for (int i = 0; i < 300 &&
+             mock.zone_snapshots.load() < live_zone_before + 1; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool live_populated = mock.zone_snapshots.load() == live_zone_before + 1 &&
+                                    mock.last_zone_id.load() == 12345;
+        {
+            std::lock_guard<std::mutex> lock(*live_zone_client.getMapMutex());
+            map->mutable_zone_map()->clear_zones();
+            map->set_zone_seq(map->zone_seq() + 1);
+        }
+        for (int i = 0; i < 300 &&
+             mock.zone_snapshots.load() < live_zone_before + 2; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool live_empty = mock.zone_snapshots.load() == live_zone_before + 2 &&
+                                mock.last_zone_count.load() == 0 &&
+                                mock.last_zone_id.load() == 0;
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const bool no_duplicate_live_zone =
+            mock.zone_snapshots.load() == live_zone_before + 2;
+        live_zone_client.stopStream();
+        const bool live_zone_stopped =
+            live_zone_rpc.wait_for(std::chrono::seconds(3)) ==
+            std::future_status::ready;
+        mock.accept_zone_updates.store(false);
+        require(live_populated, "Live ZoneStream missed populated map");
+        require(live_empty, "Live ZoneStream did not clear zones on same RPC");
+        require(no_duplicate_live_zone, "Live ZoneStream repeated unchanged zones");
+        require(live_zone_stopped, "Live ZoneStream did not cancel");
+        require(live_zone_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Live ZoneStream cancellation status incorrect");
 
         // A legacy snapshot must clear metadata observed on the previous
         // v2 unary/stream. The mock must never retain stale capabilities.
