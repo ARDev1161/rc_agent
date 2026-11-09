@@ -33,6 +33,28 @@ public:
     bool observed_battery{false};
     float observed_battery_percentage{0.0f};
 
+    std::atomic<unsigned> map_snapshots{0};
+    grpc::Status MapStream(
+        grpc::ServerContext *ctx,
+        grpc::ServerReaderWriter<map_service::GetMapRequest,
+                                 map_service::GetMapResponse> *stream) override {
+        map_service::GetMapResponse incoming;
+        if (!stream->Read(&incoming)) {
+            return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Missing map snapshot");
+        }
+        ++map_snapshots;
+        map_service::GetMapRequest reply;
+        if (!stream->Write(reply)) {
+            return grpc::Status::OK;
+        }
+        // Leave the RPC idle after the first map snapshot. A client shutdown
+        // must interrupt the stream without requiring another map update.
+        while (!ctx->IsCancelled()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return grpc::Status(grpc::StatusCode::CANCELLED, "Client stopped");
+    }
+
     void capture(const Robot::Sensors &incoming) {
         std::lock_guard<std::mutex> lock(observed_mutex);
         observed_robot_id = incoming.robot_info().robot_id();
@@ -217,6 +239,29 @@ int main() {
                 "Clean-EOF retry did not report explicit shutdown");
         require(reconnected, "Clean server EOF did not trigger a fresh stream");
         require(mock.matchesDescriptor(), "Reconnected stream lost RobotInfo");
+
+        // The map transport becomes idle after its first snapshot. Explicit
+        // shutdown must cancel that RPC even if map_seq never changes.
+        grpcClient idle_map(channel, controls, sensors, map, true);
+        auto idle_map_rpc = std::async(std::launch::async, [&idle_map]() {
+            return idle_map.MapStream();
+        });
+        for (int i = 0; i < 300 && mock.map_snapshots.load() == 0; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool map_snapshot_received = mock.map_snapshots.load() == 1;
+        const bool remained_idle =
+            idle_map_rpc.wait_for(std::chrono::milliseconds(100)) ==
+            std::future_status::timeout;
+        idle_map.stopStream();
+        const bool map_stopped =
+            idle_map_rpc.wait_for(std::chrono::seconds(3)) ==
+            std::future_status::ready;
+        require(map_snapshot_received, "Map stream did not send initial snapshot");
+        require(remained_idle, "Unchanged map unexpectedly terminated stream");
+        require(map_stopped, "Idle map stream did not stop after cancellation");
+        require(idle_map_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Idle map stream did not report explicit cancellation");
 
         // A legacy snapshot must clear metadata observed on the previous
         // v2 unary/stream. The mock must never retain stale capabilities.
