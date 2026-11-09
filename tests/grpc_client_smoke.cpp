@@ -270,6 +270,24 @@ int main() {
                     "Restored battery snapshot lost RobotInfo");
         }
 
+        // Zero percent is valid telemetry, not the same as an absent optional
+        // BatteryState. Preserve the presence bit across the wire.
+        {
+            std::lock_guard<std::mutex> lock(*client.getMutex());
+            sensors->mutable_batterystate()->set_percentage(0.0f);
+            sensors->mutable_batterystate()->set_present(true);
+        }
+        require(client.DataExchange().ok(), "Zero-percent battery unary exchange failed");
+        {
+            std::lock_guard<std::mutex> lock(mock.observed_mutex);
+            require(mock.observed_battery && mock.observed_battery_percentage == 0.0f,
+                    "Zero-percent battery was mistaken for absent BatteryState");
+            require(mock.observed_robot_id == "robot-test" &&
+                        mock.observed_capability == "manual.velocity" &&
+                        mock.observed_axis == "linear.x",
+                    "Zero-percent battery snapshot lost RobotInfo");
+        }
+
         // Use a *fresh*, potentially CONNECTING channel to catch the startup
         // race where GetState() gating previously skipped the first snapshot.
         auto stream_channel = grpc::CreateChannel(address, grpc::InsecureChannelCredentials());
