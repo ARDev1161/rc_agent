@@ -66,6 +66,7 @@ public:
     std::atomic<unsigned> zone_snapshots{0};
     std::atomic<bool> close_next_zone{false};
     std::atomic<std::uint64_t> last_zone_id{0};
+    std::atomic<int> last_zone_count{-1};
 
     grpc::Status PoseStream(
         grpc::ServerContext *ctx,
@@ -93,6 +94,7 @@ public:
         if (!stream->Read(&incoming)) {
             return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Missing zone snapshot");
         }
+        last_zone_count.store(incoming.zone_map().zones_size());
         last_zone_id.store(incoming.zone_map().zones_size() > 0
                                ? incoming.zone_map().zones(0).id() : 0);
         ++zone_snapshots;
@@ -521,6 +523,36 @@ int main() {
         require(zone_reconnect_finished, "Zone reconnect did not stop");
         require(zone_reconnect_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
                 "Zone reconnect did not report explicit shutdown");
+
+        // A previously populated zone map can become empty. The wire must
+        // carry an explicit empty ZoneMap rather than retain the old zone.
+        const unsigned empty_zone_before = mock.zone_snapshots.load();
+        {
+            std::lock_guard<std::mutex> lock(*zone_reconnect.getMapMutex());
+            map->mutable_zone_map()->clear_zones();
+            map->set_zone_seq(map->zone_seq() + 1);
+        }
+        grpcClient empty_zone_client(channel, controls, sensors, map, true);
+        auto empty_zone_rpc = std::async(std::launch::async, [&empty_zone_client]() {
+            return empty_zone_client.ZoneStream();
+        });
+        for (int i = 0; i < 300 &&
+             mock.zone_snapshots.load() == empty_zone_before; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        const bool empty_zone_received =
+            mock.zone_snapshots.load() == empty_zone_before + 1;
+        const bool empty_zone_payload =
+            mock.last_zone_count.load() == 0 && mock.last_zone_id.load() == 0;
+        empty_zone_client.stopStream();
+        const bool empty_zone_stopped =
+            empty_zone_rpc.wait_for(std::chrono::seconds(3)) ==
+            std::future_status::ready;
+        require(empty_zone_received, "Empty ZoneMap snapshot not delivered");
+        require(empty_zone_payload, "Empty ZoneMap retained stale zones");
+        require(empty_zone_stopped, "Empty ZoneMap stream did not stop");
+        require(empty_zone_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Empty ZoneMap shutdown did not report cancellation");
 
         // A legacy snapshot must clear metadata observed on the previous
         // v2 unary/stream. The mock must never retain stale capabilities.
