@@ -4,6 +4,8 @@
 #include <memory>
 #include <string>
 #include <mutex>
+#include <atomic>
+#include <cstdint>
 #include <chrono>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
@@ -176,12 +178,13 @@ private:
 
     // Template callback methods for handling action server responses
     template <typename T>
-    void goalResponseCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr goal_handle);
+    void goalResponseCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr goal_handle, std::uint64_t generation);
     template <typename T>
-    void feedbackCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr, const std::shared_ptr<const typename T::Feedback> feedback);
+    void feedbackCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr, const std::shared_ptr<const typename T::Feedback> feedback, std::uint64_t generation);
     template <typename T>
-    void resultCallback(const typename rclcpp_action::ClientGoalHandle<T>::WrappedResult &result);
+    void resultCallback(const typename rclcpp_action::ClientGoalHandle<T>::WrappedResult &result, std::uint64_t generation);
 
+    std::atomic<std::uint64_t> goal_generation_{0}; ///< Ignore late callbacks from superseded goals
     bool task_completed_;                                   ///< Flag indicating if the current task is completed
     rclcpp_action::ResultCode result_code_;                 ///< Result code of the last navigation task
     rclcpp::Time last_feedback_time_;                       ///< Timestamp of the last feedback update
