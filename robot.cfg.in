@@ -55,6 +55,8 @@ Amur:
         //     cmd_vel_frame = "base_link";
         //     map_topic = "/map";
         //     zones_topic = "/mapannotator/rc_agent_zones";
+        //     tf_map_frame = "map";
+        //     tf_robot_frame = "base_link";
         // };
 
     };
