@@ -187,6 +187,7 @@ void RobotNavigator::sendGoal(
     const typename rclcpp_action::Client<ActionT>::SharedPtr & action_client,
     const std::string & info_log)
 {
+    const auto generation = goal_generation_.fetch_add(1) + 1;
     // A new goal must never expose the previous goal's terminal result while
     // Nav2 has not yet accepted or completed this request.
     {
@@ -207,11 +208,13 @@ void RobotNavigator::sendGoal(
     // Настраиваем колбэки (goal_response, feedback, result)
     auto send_goal_options = typename rclcpp_action::Client<ActionT>::SendGoalOptions();
     send_goal_options.goal_response_callback =
-        std::bind(&RobotNavigator::goalResponseCallback<ActionT>, this, std::placeholders::_1);
+        [this, generation](auto handle) { goalResponseCallback<ActionT>(handle, generation); };
     send_goal_options.feedback_callback =
-        std::bind(&RobotNavigator::feedbackCallback<ActionT>, this, std::placeholders::_1, std::placeholders::_2);
+        [this, generation](auto handle, auto feedback) {
+            feedbackCallback<ActionT>(handle, feedback, generation);
+        };
     send_goal_options.result_callback =
-        std::bind(&RobotNavigator::resultCallback<ActionT>, this, std::placeholders::_1);
+        [this, generation](const auto &result) { resultCallback<ActionT>(result, generation); };
 
     // Fail this command without shutting down unrelated ROS2 nodes.
     if (!action_client->action_server_is_ready()) {
@@ -232,7 +235,8 @@ void RobotNavigator::sendGoal(
 }
 
 template <typename T>
-void RobotNavigator::goalResponseCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr goal_handle) {
+void RobotNavigator::goalResponseCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr goal_handle, std::uint64_t generation) {
+    if (generation != goal_generation_.load()) return;
     if (!goal_handle) {
         // Rejected goals have no result callback. Complete the request as an
         // unsuccessful outcome rather than leaving the workstation waiting.
@@ -253,8 +257,9 @@ void RobotNavigator::goalResponseCallback(typename rclcpp_action::ClientGoalHand
 template <typename T>
 void RobotNavigator::feedbackCallback(
     typename rclcpp_action::ClientGoalHandle<T>::SharedPtr, 
-    const std::shared_ptr<const typename T::Feedback> feedback)
+    const std::shared_ptr<const typename T::Feedback> feedback, std::uint64_t generation)
 {
+    if (generation != goal_generation_.load()) return;
     auto now = this->now();
 
     if ((now - last_feedback_time_).seconds() > 0.5) { // Update feedback every half of second
@@ -302,7 +307,8 @@ void RobotNavigator::feedbackCallback(
 }
 
 template <typename T>
-void RobotNavigator::resultCallback(const typename rclcpp_action::ClientGoalHandle<T>::WrappedResult &result) {
+void RobotNavigator::resultCallback(const typename rclcpp_action::ClientGoalHandle<T>::WrappedResult &result, std::uint64_t generation) {
+    if (generation != goal_generation_.load()) return;
     {
         std::lock_guard<std::mutex> lock(result_mutex_);
         result_code_ = result.code;
