@@ -143,10 +143,16 @@ void RobotNavigator::cancelTask() {
     // A cancellation request is not a terminal result. Nav2 may reject it or
     // complete the goal before cancellation is processed. Only resultCallback()
     // may publish CANCELED/SUCCEEDED/ABORTED and mark the task complete.
-    navigate_to_pose_client_->async_cancel_all_goals();
-    navigate_through_poses_client_->async_cancel_all_goals();
-    follow_waypoints_client_->async_cancel_all_goals();
-    spin_client_->async_cancel_all_goals();
+    std::function<void()> cancel;
+    {
+        std::lock_guard<std::mutex> lock(active_goal_mutex_);
+        if (active_goal_generation_ != goal_generation_.load()) return;
+        cancel_requested_ = true;
+        cancel = cancel_active_goal_;
+    }
+    // The goal may not have been accepted yet. goalResponseCallback will
+    // dispatch the pending cancellation once the current goal handle arrives.
+    if (cancel) cancel();
     RCLCPP_INFO(this->get_logger(), "Requested cancellation of navigation goals; awaiting Nav2 result.");
 }
 
@@ -188,6 +194,12 @@ void RobotNavigator::sendGoal(
     const std::string & info_log)
 {
     const auto generation = goal_generation_.fetch_add(1) + 1;
+    {
+        std::lock_guard<std::mutex> lock(active_goal_mutex_);
+        active_goal_generation_ = generation;
+        cancel_requested_ = false;
+        cancel_active_goal_ = {};
+    }
     // A new goal must never expose the previous goal's terminal result while
     // Nav2 has not yet accepted or completed this request.
     {
@@ -208,7 +220,21 @@ void RobotNavigator::sendGoal(
     // Настраиваем колбэки (goal_response, feedback, result)
     auto send_goal_options = typename rclcpp_action::Client<ActionT>::SendGoalOptions();
     send_goal_options.goal_response_callback =
-        [this, generation](auto handle) { goalResponseCallback<ActionT>(handle, generation); };
+        [this, generation, action_client](auto handle) {
+            std::function<void()> cancel;
+            {
+                std::lock_guard<std::mutex> lock(active_goal_mutex_);
+                if (generation != active_goal_generation_) return;
+                if (handle) {
+                    cancel_active_goal_ = [action_client, handle]() {
+                        action_client->async_cancel_goal(handle);
+                    };
+                    if (cancel_requested_) cancel = cancel_active_goal_;
+                }
+            }
+            if (cancel) cancel();
+            goalResponseCallback<ActionT>(handle, generation);
+        };
     send_goal_options.feedback_callback =
         [this, generation](auto handle, auto feedback) {
             feedbackCallback<ActionT>(handle, feedback, generation);
