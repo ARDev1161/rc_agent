@@ -497,3 +497,68 @@ TEST_F(Nav2EndpointBindingTest, LatePreviousSuccessCannotOverrideRejectedReplace
     EXPECT_TRUE(navigator->isTaskComplete());
     EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::UNKNOWN);
 }
+
+
+// A replacement must not cause cancelTask() to cancel an earlier goal still
+// running on the same Nav2 action server.
+TEST_F(Nav2EndpointBindingTest, CancelOnlyCurrentAcceptedGoal)
+{
+    using Action = nav2_msgs::action::NavigateToPose;
+    using Handle = rclcpp_action::ServerGoalHandle<Action>;
+    auto request = std::make_shared<Navigation::NavCommandRequest>();
+    auto response = std::make_shared<Navigation::NavCommandResponse>();
+    std::mutex grpc_mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("nav2.navigate_to_pose_action", "/nav2_mock_scoped_cancel/navigate_to_pose")
+    });
+    auto navigator = std::make_shared<RobotNavigator>(
+        "nav2_scoped_cancel_client", request, response, grpc_mutex, options);
+    auto server_node = std::make_shared<rclcpp::Node>("nav2_scoped_cancel_server");
+    std::vector<std::shared_ptr<Handle>> goals;
+    int canceled_first = 0;
+    int canceled_second = 0;
+    auto server = rclcpp_action::create_server<Action>(
+        server_node, "/nav2_mock_scoped_cancel/navigate_to_pose",
+        [](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal>) {
+            return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+        },
+        [&](const std::shared_ptr<Handle> handle) {
+            if (goals.size() > 0 && handle->get_goal_id() == goals[0]->get_goal_id())
+                ++canceled_first;
+            if (goals.size() > 1 && handle->get_goal_id() == goals[1]->get_goal_id())
+                ++canceled_second;
+            return rclcpp_action::CancelResponse::ACCEPT;
+        },
+        [&](const std::shared_ptr<Handle> handle) { goals.push_back(handle); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(navigator);
+    executor.add_node(server_node);
+    auto observer = rclcpp_action::create_client<Action>(
+        server_node, "/nav2_mock_scoped_cancel/navigate_to_pose");
+    auto spin_until = [&](const std::function<bool()> &predicate) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+            executor.spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return predicate();
+    };
+    ASSERT_TRUE(spin_until([&] { return observer->action_server_is_ready(); }));
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = "map";
+    pose.pose.position.x = 1.0;
+    navigator->goToPose(pose);
+    ASSERT_TRUE(spin_until([&] { return goals.size() == 1; }));
+    // Spin until the first goal-response callback has installed its handle.
+    for (int i = 0; i < 20; ++i) executor.spin_some();
+    pose.pose.position.x = 2.0;
+    navigator->goToPose(pose);
+    ASSERT_TRUE(spin_until([&] { return goals.size() == 2; }));
+    for (int i = 0; i < 20; ++i) executor.spin_some();
+    navigator->cancelTask();
+    ASSERT_TRUE(spin_until([&] { return canceled_second == 1; }));
+    EXPECT_EQ(canceled_first, 0);
+    EXPECT_EQ(canceled_second, 1);
+    EXPECT_FALSE(navigator->isTaskComplete()); // Cancel request is not a result.
+}
