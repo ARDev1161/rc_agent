@@ -100,7 +100,8 @@ class Nav2CompletionSourceContract(unittest.TestCase):
                   "modules/nav2/robot_navigator.cpp").read_text()
         cancel = source.split("void RobotNavigator::cancelTask()", 1)[1].split(
             "bool RobotNavigator::isTaskComplete()", 1)[0]
-        self.assertIn("async_cancel_all_goals()", cancel)
+        self.assertIn("cancel_active_goal_", cancel)
+        self.assertNotIn("async_cancel_all_goals()", cancel)
         self.assertNotIn("task_completed_ = true", cancel)
         self.assertNotIn("result_code_ =", cancel)
 
