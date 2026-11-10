@@ -233,6 +233,16 @@ void RobotNavigator::sendGoal(
 template <typename T>
 void RobotNavigator::goalResponseCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr goal_handle) {
     if (!goal_handle) {
+        // Rejected goals have no result callback. Complete the request as an
+        // unsuccessful outcome rather than leaving the workstation waiting.
+        {
+            std::lock_guard<std::mutex> lock(result_mutex_);
+            result_code_ = rclcpp_action::ResultCode::UNKNOWN;
+        }
+        {
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            task_completed_ = true;
+        }
         RCLCPP_ERROR(get_logger(), "Task was rejected by server.");
     } else {
         RCLCPP_INFO(get_logger(), "Task accepted by server.");
