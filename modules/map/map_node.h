@@ -90,7 +90,11 @@ private:
     /// Subscriber for mapannotator zone data
     rclcpp::Subscription<std_msgs::msg::String>::SharedPtr zones_sub_;
 
-    /// Trusted local TF frame bindings (defaults preserve legacy behavior).\n    std::string map_tf_frame_;\n    std::string robot_tf_frame_;\n\n    /// Delay (in milliseconds) for TF update timer
+    /// Trusted local TF frame bindings (defaults preserve legacy behavior).
+    std::string map_tf_frame_;
+    std::string robot_tf_frame_;
+
+    /// Delay (in milliseconds) for TF update timer
     int tfUpdateDelayMs = 200;
     /// Incremented on each incoming map update.
     std::uint64_t map_seq_{0};
