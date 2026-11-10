@@ -11,7 +11,7 @@ SOURCE = (Path(__file__).resolve().parents[1] / "modules/nav2/robot_navigator.cp
 
 def method(name, next_name):
     start = SOURCE.index("void RobotNavigator::" + name + "(")
-    end = SOURCE.index(next_name, start)
+    end = SOURCE.index(next_name, start) if next_name else len(SOURCE)
     return SOURCE[start:end]
 
 
