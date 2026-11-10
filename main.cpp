@@ -905,8 +905,15 @@ int main(int argc, char **argv)
     rclcpp::Parameter("basecontrol.cmd_vel_frame_id",
       endpointOrDefault(endpoint_config, "Amur.API.endpoints.cmd_vel_frame", "base_link"))
   });
+  rclcpp::NodeOptions map_options;
+  map_options.parameter_overrides({
+    rclcpp::Parameter("map.tf_map_frame",
+      endpointOrDefault(endpoint_config, "Amur.API.endpoints.tf_map_frame", "map")),
+    rclcpp::Parameter("map.tf_robot_frame",
+      endpointOrDefault(endpoint_config, "Amur.API.endpoints.tf_robot_frame", "base_link"))
+  });
   auto mapNode = std::make_shared<MapNode>(mapPtr, map_topic, zones_topic,
-                                           network->getClientInstance()->getMapMutex());
+                                           network->getClientInstance()->getMapMutex(), map_options);
   auto baseControlNode = std::make_shared<BaseControlNode>(
     controlsPtr->mutable_basecontrol(),
     *network->getClientInstance()->getMutex(), base_options);
