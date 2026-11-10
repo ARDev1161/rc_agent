@@ -131,6 +131,8 @@ TEST_F(Nav2EndpointBindingTest, ConfiguredInitialPoseActuallyPublishes)
 #include <rclcpp_action/create_server.hpp>
 #include <nav2_msgs/action/navigate_to_pose.hpp>
 #include <atomic>
+#include <functional>
+#include <vector>
 
 // Exercise actual ROS action transport, not just action-name resolution.
 // The fake server is local to this test and never commands a robot.
@@ -366,4 +368,67 @@ TEST_F(Nav2EndpointBindingTest, MockNavigateToPoseRejectedCancelCanStillSucceed)
     EXPECT_TRUE(navigator->isTaskComplete());
     EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
     EXPECT_TRUE(rclcpp::ok());
+}
+
+ 
+// A result from an earlier goal must never complete a newer goal.
+TEST_F(Nav2EndpointBindingTest, LatePreviousGoalResultDoesNotCompleteReplacement)
+{
+    using Action = nav2_msgs::action::NavigateToPose;
+    using GoalHandle = rclcpp_action::ServerGoalHandle<Action>;
+    auto request = std::make_shared<Navigation::NavCommandRequest>();
+    auto response = std::make_shared<Navigation::NavCommandResponse>();
+    std::mutex grpc_mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("nav2.navigate_to_pose_action", "/nav2_mock_superseded/navigate_to_pose")
+    });
+    auto navigator = std::make_shared<RobotNavigator>(
+        "nav2_superseded_client", request, response, grpc_mutex, options);
+    auto server_node = std::make_shared<rclcpp::Node>("nav2_superseded_server");
+    std::vector<std::shared_ptr<GoalHandle>> goals;
+    auto server = rclcpp_action::create_server<Action>(
+        server_node, "/nav2_mock_superseded/navigate_to_pose",
+        [](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal>) {
+            return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+        },
+        [](const std::shared_ptr<GoalHandle>) {
+            return rclcpp_action::CancelResponse::ACCEPT;
+        },
+        [&](const std::shared_ptr<GoalHandle> handle) { goals.push_back(handle); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(navigator);
+    executor.add_node(server_node);
+    auto observer = rclcpp_action::create_client<Action>(
+        server_node, "/nav2_mock_superseded/navigate_to_pose");
+    auto spin_until = [&](const std::function<bool()> &predicate) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+            executor.spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return predicate();
+    };
+    ASSERT_TRUE(spin_until([&] { return observer->action_server_is_ready(); }));
+    geometry_msgs::msg::PoseStamped first;
+    first.header.frame_id = "map";
+    first.pose.position.x = 1.0;
+    navigator->goToPose(first);
+    ASSERT_TRUE(spin_until([&] { return goals.size() == 1; }));
+    geometry_msgs::msg::PoseStamped second = first;
+    second.pose.position.x = 2.0;
+    navigator->goToPose(second);
+    ASSERT_TRUE(spin_until([&] { return goals.size() == 2; }));
+    EXPECT_FALSE(navigator->isTaskComplete());
+    goals[0]->succeed(std::make_shared<Action::Result>());
+    // Allow the stale result callback to run before inspecting state.
+    for (int i = 0; i < 20; ++i) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_FALSE(navigator->isTaskComplete());
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::UNKNOWN);
+    goals[1]->succeed(std::make_shared<Action::Result>());
+    ASSERT_TRUE(spin_until([&] { return navigator->isTaskComplete(); }));
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
 }
