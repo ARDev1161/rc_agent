@@ -26,7 +26,8 @@ class Nav2LifecycleContract(unittest.TestCase):
 
     def test_cancel_request_never_publishes_terminal_result(self):
         body = method("cancelTask", "bool RobotNavigator::isTaskComplete")
-        self.assertIn("async_cancel_all_goals()", body)
+        self.assertIn("cancel_active_goal_", body)
+        self.assertNotIn("async_cancel_all_goals()", body)
         self.assertNotRegex(body, r"(?m)^\s*(?:result_code_|task_completed_)\s*=")
 
     def test_rejected_goal_is_completed_as_unknown(self):
