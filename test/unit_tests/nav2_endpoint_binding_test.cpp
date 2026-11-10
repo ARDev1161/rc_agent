@@ -58,6 +58,8 @@ TEST_F(Nav2EndpointBindingTest, MissingNav2ServersDoNotShutdownRosContext)
     pose.header.frame_id = "map";
     navigator.goToPose(pose);
     EXPECT_TRUE(navigator.isTaskComplete());
-    EXPECT_EQ(navigator.getResult(), rclcpp_action::ResultCode::UNKNOWN);
+    // ROS2 Humble gtest_vendor and the host GTest printer may differ; avoid
+    // instantiating an enum printer that is not linked by the vendor library.
+    EXPECT_TRUE(navigator.getResult() == rclcpp_action::ResultCode::UNKNOWN);
     EXPECT_TRUE(rclcpp::ok());
 }
