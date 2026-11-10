@@ -7,6 +7,7 @@
 #include <atomic>
 #include <cstdint>
 #include <chrono>
+#include <functional>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -185,6 +186,10 @@ private:
     void resultCallback(const typename rclcpp_action::ClientGoalHandle<T>::WrappedResult &result, std::uint64_t generation);
 
     std::atomic<std::uint64_t> goal_generation_{0}; ///< Ignore late callbacks from superseded goals
+    std::mutex active_goal_mutex_;                          ///< Protect current goal cancellation
+    std::uint64_t active_goal_generation_{0};
+    bool cancel_requested_{false};                          ///< Cancellation before goal acceptance
+    std::function<void()> cancel_active_goal_;              ///< Cancel only the accepted current goal
     bool task_completed_;                                   ///< Flag indicating if the current task is completed
     rclcpp_action::ResultCode result_code_;                 ///< Result code of the last navigation task
     rclcpp::Time last_feedback_time_;                       ///< Timestamp of the last feedback update
