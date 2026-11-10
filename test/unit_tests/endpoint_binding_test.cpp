@@ -56,3 +56,25 @@ TEST_F(EndpointBindingTest, EmptyOdometryTopicFailsClosed)
     });
     EXPECT_THROW(BaseControlNode(&controls, mutex, options), std::invalid_argument);
 }
+
+TEST_F(EndpointBindingTest, EmptyVelocityTopicFailsClosed)
+{
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "")
+    });
+    EXPECT_THROW(BaseControlNode(&controls, mutex, options), std::invalid_argument);
+}
+
+TEST_F(EndpointBindingTest, EmptyVelocityFrameFailsClosed)
+{
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.cmd_vel_frame", "")
+    });
+    EXPECT_THROW(BaseControlNode(&controls, mutex, options), std::invalid_argument);
+}
