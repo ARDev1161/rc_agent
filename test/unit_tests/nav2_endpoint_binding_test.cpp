@@ -3,6 +3,8 @@
 #include <mutex>
 #include <memory>
 #include <string>
+#include <chrono>
+#include <thread>
 #include "modules/nav2/robot_navigator.h"
 
 class Nav2EndpointBindingTest : public ::testing::Test {
@@ -83,4 +85,44 @@ TEST_F(Nav2EndpointBindingTest, MissingNav2ServersDoNotShutdownRosContext)
     const auto topics = navigator.get_topic_names_and_types();
     EXPECT_TRUE(topics.find("/offline_test/initialpose") != topics.end());
     EXPECT_TRUE(topics.find("/initialpose") == topics.end());
+}
+
+TEST_F(Nav2EndpointBindingTest, ConfiguredInitialPoseActuallyPublishes)
+{
+    auto request = std::make_shared<Navigation::NavCommandRequest>();
+    auto response = std::make_shared<Navigation::NavCommandResponse>();
+    std::mutex grpc_mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("nav2.initial_pose_topic", "/nav2_binding_test/initialpose")
+    });
+    auto navigator = std::make_shared<RobotNavigator>(
+        "nav2_initialpose_publisher_test", request, response, grpc_mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("nav2_initialpose_observer_test");
+    using Pose = geometry_msgs::msg::PoseWithCovarianceStamped;
+    bool received = false;
+    double observed_x = 0.0;
+    auto subscription = observer->create_subscription<Pose>(
+        "/nav2_binding_test/initialpose", 10,
+        [&](const Pose::SharedPtr msg) {
+            observed_x = msg->pose.pose.position.x;
+            received = true;
+        });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(navigator);
+    executor.add_node(observer);
+    Pose pose;
+    pose.header.frame_id = "map";
+    pose.pose.pose.position.x = 12.5;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!received && std::chrono::steady_clock::now() < deadline) {
+        // Re-publish while DDS discovery is settling; this is a bounded
+        // transport check, not merely a ROS graph topic-name assertion.
+        navigator->setInitialPose(pose);
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    EXPECT_TRUE(received);
+    if (received) EXPECT_DOUBLE_EQ(observed_x, 12.5);
+    EXPECT_TRUE(rclcpp::ok());
 }
