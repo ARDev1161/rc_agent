@@ -57,6 +57,11 @@ Amur:
         //     zones_topic = "/mapannotator/rc_agent_zones";
         //     tf_map_frame = "map";
         //     tf_robot_frame = "base_link";
+        //     navigate_to_pose_action = "navigate_to_pose";
+        //     navigate_through_poses_action = "navigate_through_poses";
+        //     follow_waypoints_action = "follow_waypoints";
+        //     spin_action = "spin";
+        //     initial_pose_topic = "initialpose";
         // };
 
     };
