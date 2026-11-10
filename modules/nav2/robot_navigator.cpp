@@ -1,12 +1,14 @@
 #include "robot_navigator_handler.h"
 #include "robot_navigator.h"
+#include <stdexcept>
 
 
 RobotNavigator::RobotNavigator(const std::string &node_name,
                                std::shared_ptr<NavCommandRequest> nav_cmd_req,
                                std::shared_ptr<NavCommandResponse> nav_cmd_resp,
-                               std::mutex &grpc_mutex)
-  : rclcpp::Node(node_name),
+                               std::mutex &grpc_mutex,
+                               const rclcpp::NodeOptions &options)
+  : rclcpp::Node(node_name, options),
     last_feedback_time_(this->now()),
     task_completed_(false),
     result_code_(rclcpp_action::ResultCode::UNKNOWN),
@@ -14,14 +16,28 @@ RobotNavigator::RobotNavigator(const std::string &node_name,
     nav_cmd_resp_(nav_cmd_resp),
     grpc_mutex_(grpc_mutex)
 {
-    // Initialize action clients
-    navigate_to_pose_client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
-    navigate_through_poses_client_ = rclcpp_action::create_client<NavigateThroughPoses>(this, "navigate_through_poses");
-    follow_waypoints_client_ = rclcpp_action::create_client<FollowWaypoints>(this, "follow_waypoints");
-    spin_client_ = rclcpp_action::create_client<Spin>(this, "spin");
+    // Only locally configured endpoint names are accepted; defaults retain dev wiring.
+    const auto navigate_to_pose = declare_parameter<std::string>(
+        "nav2.navigate_to_pose_action", "navigate_to_pose");
+    const auto navigate_through_poses = declare_parameter<std::string>(
+        "nav2.navigate_through_poses_action", "navigate_through_poses");
+    const auto follow_waypoints = declare_parameter<std::string>(
+        "nav2.follow_waypoints_action", "follow_waypoints");
+    const auto spin = declare_parameter<std::string>("nav2.spin_action", "spin");
+    const auto initial_pose = declare_parameter<std::string>(
+        "nav2.initial_pose_topic", "initialpose");
+    if (navigate_to_pose.empty() || navigate_through_poses.empty() ||
+        follow_waypoints.empty() || spin.empty() || initial_pose.empty()) {
+        throw std::invalid_argument("Nav2 action and initial pose endpoints must not be empty");
+    }
 
-    // Initialize publisher for initial pose
-    initial_pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("initialpose", 10);
+    navigate_to_pose_client_ = rclcpp_action::create_client<NavigateToPose>(this, navigate_to_pose);
+    navigate_through_poses_client_ = rclcpp_action::create_client<NavigateThroughPoses>(
+        this, navigate_through_poses);
+    follow_waypoints_client_ = rclcpp_action::create_client<FollowWaypoints>(this, follow_waypoints);
+    spin_client_ = rclcpp_action::create_client<Spin>(this, spin);
+    initial_pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
+        initial_pose, 10);
 
     // Check availability of action servers
     if (!navigate_to_pose_client_->wait_for_action_server(std::chrono::seconds(10))) {
