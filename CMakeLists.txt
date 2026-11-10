@@ -98,6 +98,16 @@ add_executable(${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)
+  ament_add_gtest(map_endpoint_binding_test
+    test/unit_tests/map_endpoint_binding_test.cpp
+    modules/map/map_node.cpp
+  )
+  if(TARGET map_endpoint_binding_test)
+    target_include_directories(map_endpoint_binding_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    ament_target_dependencies(map_endpoint_binding_test rclcpp nav_msgs std_msgs tf2 tf2_ros geometry_msgs)
+    target_link_libraries(map_endpoint_binding_test RobotProtos)
+  endif()
+
   ament_add_gtest(endpoint_binding_test\n    test/unit_tests/endpoint_binding_test.cpp\n    modules/basecontrol/basecontrol.cpp\n  )\n  if(TARGET endpoint_binding_test)\n    target_include_directories(endpoint_binding_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})\n    ament_target_dependencies(endpoint_binding_test rclcpp geometry_msgs)\n    target_link_libraries(endpoint_binding_test RobotProtos)\n  endif()\n\n  ament_add_gtest(battery_freshness_test
     test/unit_tests/battery_freshness_test.cpp
     modules/battery/battery_state_node.cpp
