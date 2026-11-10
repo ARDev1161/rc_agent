@@ -62,4 +62,25 @@ TEST_F(Nav2EndpointBindingTest, MissingNav2ServersDoNotShutdownRosContext)
     // instantiating an enum printer that is not linked by the vendor library.
     EXPECT_TRUE(navigator.getResult() == rclcpp_action::ResultCode::UNKNOWN);
     EXPECT_TRUE(rclcpp::ok());
+
+    // Every optional action must fail closed independently; no global ROS shutdown.
+    navigator.goThroughPoses({pose});
+    EXPECT_TRUE(navigator.isTaskComplete());
+    EXPECT_TRUE(navigator.getResult() == rclcpp_action::ResultCode::UNKNOWN);
+    navigator.followWaypoints({pose});
+    EXPECT_TRUE(navigator.isTaskComplete());
+    EXPECT_TRUE(navigator.getResult() == rclcpp_action::ResultCode::UNKNOWN);
+    navigator.spin(0.5, 1.0);
+    EXPECT_TRUE(navigator.isTaskComplete());
+    EXPECT_TRUE(navigator.getResult() == rclcpp_action::ResultCode::UNKNOWN);
+    EXPECT_TRUE(rclcpp::ok());
+
+    // The configured localization publisher must use the override, not
+    // silently publish to the legacy initialpose topic.
+    geometry_msgs::msg::PoseWithCovarianceStamped initial;
+    initial.header.frame_id = "map";
+    navigator.setInitialPose(initial);
+    const auto topics = navigator.get_topic_names_and_types();
+    EXPECT_TRUE(topics.find("/offline_test/initialpose") != topics.end());
+    EXPECT_TRUE(topics.find("/initialpose") == topics.end());
 }
