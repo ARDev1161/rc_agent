@@ -99,6 +99,19 @@ add_executable(${PROJECT_NAME}
 )
 
 if(BUILD_TESTING)
+  ament_add_gtest(nav2_endpoint_binding_test
+    test/unit_tests/nav2_endpoint_binding_test.cpp
+    modules/nav2/robot_navigator.cpp
+    modules/nav2/robot_navigator_handler.cpp
+    modules/nav2/nav_command.cpp
+  )
+  if(TARGET nav2_endpoint_binding_test)
+    target_include_directories(nav2_endpoint_binding_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    ament_target_dependencies(nav2_endpoint_binding_test
+      rclcpp rclcpp_action geometry_msgs nav2_msgs lifecycle_msgs action_msgs)
+    target_link_libraries(nav2_endpoint_binding_test RobotProtos)
+  endif()
+
   ament_add_gtest(map_endpoint_binding_test
     test/unit_tests/map_endpoint_binding_test.cpp
     modules/map/map_node.cpp
