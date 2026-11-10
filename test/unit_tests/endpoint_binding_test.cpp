@@ -74,7 +74,7 @@ TEST_F(EndpointBindingTest, EmptyVelocityFrameFailsClosed)
     std::mutex mutex;
     rclcpp::NodeOptions options;
     options.parameter_overrides({
-        rclcpp::Parameter("basecontrol.cmd_vel_frame", "")
+        rclcpp::Parameter("basecontrol.cmd_vel_frame_id", "")
     });
     EXPECT_THROW(BaseControlNode(&controls, mutex, options), std::invalid_argument);
 }
