@@ -39,29 +39,10 @@ RobotNavigator::RobotNavigator(const std::string &node_name,
     initial_pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
         initial_pose, 10);
 
-    // Check availability of action servers
-    if (!navigate_to_pose_client_->wait_for_action_server(std::chrono::seconds(10))) {
-        RCLCPP_ERROR(get_logger(), "navigate_to_pose action server not available!");
-        rclcpp::shutdown();
-        return;
-    }
-    if (!navigate_through_poses_client_->wait_for_action_server(std::chrono::seconds(10))) {
-        RCLCPP_ERROR(get_logger(), "navigate_through_poses action server not available!");
-        rclcpp::shutdown();
-        return;
-    }
-    if (!follow_waypoints_client_->wait_for_action_server(std::chrono::seconds(10))) {
-        RCLCPP_ERROR(get_logger(), "follow_waypoints action server not available!");
-        rclcpp::shutdown();
-        return;
-    }
-    if (!spin_client_->wait_for_action_server(std::chrono::seconds(10))) {
-        RCLCPP_ERROR(get_logger(), "spin action server not available!");
-        rclcpp::shutdown();
-        return;
-    }
-
-    RCLCPP_INFO(get_logger(), "Connected to action server.");
+    // Nav2 may start after rc_agent. Do not block startup for 40 seconds or
+    // shut down the entire ROS context when one optional action is absent.
+    // Client availability is checked when a command is actually submitted.
+    RCLCPP_INFO(get_logger(), "Nav2 clients configured; action servers may connect later.");
 
     // Create a timer to check for new navigation commands every 100 ms
     command_timer_ = this->create_wall_timer(
@@ -231,6 +212,20 @@ void RobotNavigator::sendGoal(
         std::bind(&RobotNavigator::feedbackCallback<ActionT>, this, std::placeholders::_1, std::placeholders::_2);
     send_goal_options.result_callback =
         std::bind(&RobotNavigator::resultCallback<ActionT>, this, std::placeholders::_1);
+
+    // Fail this command without shutting down unrelated ROS2 nodes.
+    if (!action_client->action_server_is_ready()) {
+        {
+            std::lock_guard<std::mutex> lock(result_mutex_);
+            result_code_ = rclcpp_action::ResultCode::UNKNOWN;
+        }
+        {
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            task_completed_ = true;
+        }
+        RCLCPP_ERROR(get_logger(), "Nav2 action server is not ready; goal was not sent.");
+        return;
+    }
 
     // Асинхронно отправляем goal
     action_client->async_send_goal(goal_msg, send_goal_options);
