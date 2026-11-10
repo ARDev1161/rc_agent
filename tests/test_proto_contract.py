@@ -79,3 +79,28 @@ class V2Contract(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class Nav2CompletionSourceContract(unittest.TestCase):
+    """Static guard only; real ROS2 action-server outcome tests remain required."""
+
+    def test_rejected_goal_has_terminal_unknown_not_success(self):
+        from pathlib import Path
+        source = (Path(__file__).resolve().parents[1] /
+                  "modules/nav2/robot_navigator.cpp").read_text()
+        callback = source.split("void RobotNavigator::goalResponseCallback", 1)[1].split(
+            "void RobotNavigator::feedbackCallback", 1)[0]
+        rejected = callback.split("if (!goal_handle)", 1)[1].split("} else {", 1)[0]
+        self.assertIn("ResultCode::UNKNOWN", rejected)
+        self.assertIn("task_completed_ = true", rejected)
+        self.assertNotIn("ResultCode::SUCCEEDED", rejected)
+
+    def test_cancel_request_does_not_publish_terminal_status(self):
+        from pathlib import Path
+        source = (Path(__file__).resolve().parents[1] /
+                  "modules/nav2/robot_navigator.cpp").read_text()
+        cancel = source.split("void RobotNavigator::cancelTask()", 1)[1].split(
+            "bool RobotNavigator::isTaskComplete()", 1)[0]
+        self.assertIn("async_cancel_all_goals()", cancel)
+        self.assertNotIn("task_completed_ = true", cancel)
+        self.assertNotIn("result_code_ =", cancel)
+
