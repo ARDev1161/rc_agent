@@ -39,11 +39,13 @@ public:
      * @param nav_cmd_req Shared pointer to the NavCommandRequest protobuf message.
      * @param nav_cmd_resp Shared pointer to the NavCommandResponse protobuf message.
      * @param grpc_mutex Reference to a mutex used for thread-safe gRPC operations.
+     * @param options ROS2 parameter overrides for trusted Nav2 endpoint names.
      */
     explicit RobotNavigator(const std::string &node_name,
                             std::shared_ptr<NavCommandRequest> nav_cmd_req,
                             std::shared_ptr<NavCommandResponse> nav_cmd_resp,
-                            std::mutex &grpc_mutex);
+                            std::mutex &grpc_mutex,
+                            const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 
     /**
      * @brief Destructor for RobotNavigator.
