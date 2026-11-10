@@ -45,6 +45,18 @@ Amur:
         // Optional ROS2 sensor_msgs/msg/BatteryState topic. Leave unset for
         // robots without battery telemetry; no zero-valued battery is sent.
         // battery_topic = "/battery_state";
+        // P2: trusted local ROS2 endpoint mappings (libconfig, not ROS params).
+        // Leave endpoints unset to preserve legacy defaults.
+        // endpoints:
+        // {
+        //     odom_topic = "/odom";
+        //     cmd_vel_topic = "/cmd_vel";
+        //     cmd_vel_type = "twist"; // or "twist_stamped"
+        //     cmd_vel_frame = "base_link";
+        //     map_topic = "/map";
+        //     zones_topic = "/mapannotator/rc_agent_zones";
+        // };
+
     };
 
     Peripheral:
