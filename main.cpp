@@ -12,6 +12,7 @@
 #include <fstream>
 #include <cstring>
 #include <unordered_set>
+#include <stdexcept>
 
 #include "config/configprocessor.h"
 #include "network/networkcontroller.h"
@@ -61,6 +62,23 @@ std::string resolveVideoPipeline()
   }
 
   return loadVideoPipelineFromConfig("robot.cfg");
+}
+
+// Only locally configured, allowlisted ROS2 bindings are passed to adapters.
+// Missing settings preserve the legacy names; present but invalid settings fail closed.
+std::string endpointOrDefault(ConfigProcessor &config, const std::string &key,
+                              const std::string &fallback)
+{
+  const auto type = config.getType(key);
+  if (type == libconfig::Setting::TypeNone) {
+    return fallback;
+  }
+  std::string value;
+  if (type != libconfig::Setting::TypeString ||
+      config.searchString(key, value) != EXIT_SUCCESS || value.empty()) {
+    throw std::invalid_argument("Invalid robot endpoint setting: " + key);
+  }
+  return value;
 }
 
 // Advertise only semantic capabilities. ROS2/gRPC endpoints remain trusted local config.
@@ -870,11 +888,28 @@ int main(int argc, char **argv)
     batteryStateNode = std::make_shared<BatteryStateNode>(
       sensorsPtr, network->getClientInstance()->getMutex(), battery_topic);
   }
-  auto mapNode = std::make_shared<MapNode>(mapPtr, "/map", "/mapannotator/rc_agent_zones",
+  // Robot-specific ROS2 bindings live in libconfig; ROS2 parameters remain
+  // independently usable for runtime tuning. The defaults preserve dev wiring.
+  ConfigProcessor endpoint_config(robot_config_path);
+  const auto map_topic = endpointOrDefault(endpoint_config, "Amur.API.endpoints.map_topic", "/map");
+  const auto zones_topic = endpointOrDefault(endpoint_config, "Amur.API.endpoints.zones_topic",
+                                             "/mapannotator/rc_agent_zones");
+  rclcpp::NodeOptions base_options;
+  base_options.parameter_overrides({
+    rclcpp::Parameter("basecontrol.odom_topic",
+      endpointOrDefault(endpoint_config, "Amur.API.endpoints.odom_topic", "/odom")),
+    rclcpp::Parameter("basecontrol.cmd_vel_topic",
+      endpointOrDefault(endpoint_config, "Amur.API.endpoints.cmd_vel_topic", "/cmd_vel")),
+    rclcpp::Parameter("basecontrol.cmd_vel_msg_type",
+      endpointOrDefault(endpoint_config, "Amur.API.endpoints.cmd_vel_type", "twist")),
+    rclcpp::Parameter("basecontrol.cmd_vel_frame_id",
+      endpointOrDefault(endpoint_config, "Amur.API.endpoints.cmd_vel_frame", "base_link"))
+  });
+  auto mapNode = std::make_shared<MapNode>(mapPtr, map_topic, zones_topic,
                                            network->getClientInstance()->getMapMutex());
   auto baseControlNode = std::make_shared<BaseControlNode>(
     controlsPtr->mutable_basecontrol(),
-    *network->getClientInstance()->getMutex());
+    *network->getClientInstance()->getMutex(), base_options);
   auto navigatorNode = std::make_shared<RobotNavigator>(
     "basic_navigator_node",
     std::shared_ptr<NavCommandRequest>(controlsPtr->mutable_navcontrol(), [](NavCommandRequest*){}),
