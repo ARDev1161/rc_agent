@@ -3,6 +3,7 @@
 #include <cmath>
 #include <chrono>
 #include <cctype>
+#include <stdexcept>
 
 using namespace std::chrono_literals;
 
@@ -119,9 +120,13 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
     grpc_mutex_(grpcMutex),
     state_machine_(std::make_unique<ControlStateMachine>(this->now()))
 {
+    const auto odom_topic = this->declare_parameter<std::string>("basecontrol.odom_topic", "/odom");
+    if (odom_topic.empty()) {
+        throw std::invalid_argument("basecontrol.odom_topic must not be empty");
+    }
     odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        "/odom", 10, std::bind(&BaseControlNode::odomCallback, this, std::placeholders::_1));
-    RCLCPP_DEBUG(this->get_logger(), "Subscribed to /odom");
+        odom_topic, 10, std::bind(&BaseControlNode::odomCallback, this, std::placeholders::_1));
+    RCLCPP_INFO(this->get_logger(), "Subscribed to odometry topic %s", odom_topic.c_str());
 
     cmd_vel_topic_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_topic", "/cmd_vel");
     cmd_vel_msg_type_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_msg_type", "twist");
@@ -135,10 +140,16 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
     std::transform(cmd_vel_msg_type_.begin(), cmd_vel_msg_type_.end(), cmd_vel_msg_type_.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
+    if (cmd_vel_topic_.empty() || cmd_vel_frame_id_.empty()) {
+        throw std::invalid_argument("basecontrol cmd_vel topic and frame_id must not be empty");
+    }
+    if (cmd_vel_msg_type_ != "twist" && cmd_vel_msg_type_ != "twist_stamped") {
+        throw std::invalid_argument("Unsupported basecontrol.cmd_vel_msg_type: " + cmd_vel_msg_type_);
+    }
+
     if (cmd_vel_msg_type_ == "twist_stamped") {
         cmd_vel_stamped_pub_ = this->create_publisher<geometry_msgs::msg::TwistStamped>(cmd_vel_topic_, 10);
     } else {
-        cmd_vel_msg_type_ = "twist";
         cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(cmd_vel_topic_, 10);
     }
 
