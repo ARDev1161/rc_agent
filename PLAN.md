@@ -29,8 +29,8 @@
 | Phase | State | Work (owning repo) | Acceptance / evidence |
 |---|---|---|---|
 | P0 Baseline + coordination | DONE | feature branches; AGENTS.md + PLAN.md in all affected repos; inventory of current flow | document base refs, no default branch changes |
-| P1 Additive API skeleton | IN PROGRESS | synced minimal proto across AmurCore + rc_agent; agent config -> RobotInfo; first receipt/inspection on workstation; tests | same proto byte-for-byte, legacy `Controls`/`Sensors` fields untouched, `protoc` generates; old clients continue; config defaults safe |
-| P2 Robot-side endpoint bindings | TODO | configurable ROS2 cmd_vel (Twist/TwistStamped), odom/map/TF/Nav2 action names, optional local gRPC adapters with allowlists; config validation | two robot profiles, different endpoint names, no code edits; unknown types rejected; action cancellation status correct |
+| P1 Additive API skeleton | ACCEPTANCE PENDING (implementation/CI; manual gates open) | synced minimal proto across AmurCore + rc_agent; agent config -> RobotInfo; first receipt/inspection on workstation; tests | same proto byte-for-byte, legacy `Controls`/`Sensors` fields untouched, `protoc` generates; old clients continue; config defaults safe |
+| P2 Robot-side endpoint bindings | IN PROGRESS (owner-authorized 2026-11-10) | configurable ROS2 cmd_vel (Twist/TwistStamped), odom/map/TF/Nav2 action names, optional local gRPC adapters with allowlists; config validation | two robot profiles, different endpoint names, no code edits; unknown types rejected; action cancellation status correct |
 | P3 Multi-robot isolation | TODO | AmurCore per-connection sessions/state, selection/UI routing, per-robot maps+task+video, connection lifecycle | two concurrent agent simulators cannot cross-control or mix map/sensors; selection routes correctly; disconnect releases velocity authority |
 | P4 Task + dialogue transport | TODO | correlate task/parent/stage ID, status snapshot/event, text/audio forwarding, asynchronous robot-originated chat + history/log requests | planner accept != completed; expandable stages, late prompt, disconnect/reconnect; bounded audio chunks |
 | P5 Efficient streams + teleop preemption | TODO | snapshot + changed state, rate/hysteresis; independent map updates, video enable on selected robot; explicit pause/resume/cancel with backend acknowledgements | idle video network=0; no stale velocity after disconnect; no task resumes after cancel |
@@ -54,6 +54,12 @@
 5. Do not invent support for a ROS service/action type: register a tested adapter or fail closed. No unbounded binary audio in gRPC streams. Control must expire safely.
 6. Before any change to the user-approved product contract, update an **Open decisions** entry and obtain explicit confirmation rather than silently introducing a framework.
 7. GitFlow: `main/master` stable, `dev` integration where present, `feat/rc-api-v2` for this work, optional `fix/*` focused bugfixes. Conventional commits. Document owner/repo, base and deps.
+
+## Owner-approved phase overlap — 2026-11-10
+- Owner explicitly authorized starting P2 implementation **before** manual TurtleBot3/Gazebo Sim P1 acceptance. This supersedes earlier P1→P2 sequencing restrictions in AGENTS.md, the manual acceptance checklist, and historical handoffs **only as to permission to start P2**.
+- P1 is **ACCEPTANCE PENDING, NOT DONE**. P1-01…08 and remaining physical/video/VPN-dependent gates stay open, with PASS/FAIL/SKIP evidence required. No P1 acceptance is inferred from CI.
+- P2 is **IN PROGRESS**, beginning with existing rc_agent endpoint bindings and safe config validation. Preserve legacy behavior, no v2 velocity without TTL/session/lease/deadman/watchdog. Do not begin P3 until both P1 and P2 acceptance are reviewed.
+- GitHub Pages remain on separate orphan `documentation` branches; do not mix docs with production branches.
 
 ## Open decisions and constraints
 - Dedicated shared `rc_protocol` repository vs mirrored proto: defer; **mirror identically for P1** to avoid build-system/repo proliferation.
@@ -540,3 +546,7 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - AmurCore test commit `c1acf74a17056a28dae3566990fd7efe921ebd1e`: extend live gRPC MapStream smoke to distinguish an absent OccupancyGrid (preserve prior map) from an explicitly present empty OccupancyGrid (replace/clear prior map). Verify both ACKs, map_seq and independent pose/zones/zone_seq retention. No production source/protobuf change; rc_agent runtime unchanged.
 - New feature HEAD CI: NOT YET VERIFIED at handoff; local Qt5/ROS2 tests NOT RUN in connector-only runner. Check exact current HEAD Actions and fix failures before reporting green.
 - P1 IN PROGRESS; P2 TODO. TurtleBot3/Gazebo Sim P1-01..08 NOT RUN; physical hardware gates NOT RUN. Next: check CI for new HEADs, then operator's existing simulator integration and owner gate review. Documentation branches remain isolated; no merge.
+
+### P2 authorization handoff — 2026-11-10
+- Owner authorized P2 development while P1 software/manual acceptance remains pending. Pre-change feature HEADs: AmurCore `2c81615b334c443e07e0f30eadd29358878da5d9` (Actions 42755447105 SUCCESS); rc_agent `6c39578822c07de58b65f675beda8c0f978535d5` (Actions 42755452450 SUCCESS). Those are pre-change runs only.
+- Next: configure and validate existing rc_agent ROS2 endpoint bindings (start with odom/cmd_vel), add deterministic regression and verify new HEAD CI. TurtleBot3/Gazebo Sim P1-01..08 NOT RUN; hardware tests NOT RUN. No P3 or default-branch merges.
