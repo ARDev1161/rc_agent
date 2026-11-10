@@ -518,3 +518,9 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - New HEAD CI: NOT YET VERIFIED at time of this handoff; do not infer green from baseline. Local C++ test: NOT RUN (no local Qt5/gRPC build setup). Check Actions for both exact feature HEADs and fix any failures.
 - P1 remains IN PROGRESS; TurtleBot3/Gazebo Sim manual integration and remaining physical joystick/video gates NOT RUN. VPN-specific retest waived only if connection model unchanged. P2 NOT STARTED.
 - Next: validate new AmurCore CI on its exact SHA, run existing TurtleBot3 container P1 checklist when operator provides container startup/config, then record PASS/FAIL/SKIP per gate. Do not merge.
+
+### P1 exact occupancy byte regression — 2026-11-10
+- Previous feature HEAD d80eb21cfba8af3a7fd0e51219cd8f79295332c8 CI VERIFIED SUCCESS: [Actions 42732546442](https://github.com/ARDev1161/rc_agent/actions/runs/42732546442) (5/5 jobs). This result is for the previous SHA only.
+- AmurCore [bbabb148](https://github.com/ARDev1161/AmurCore/commit/bbabb1487d10e4ef76c5cbea96b38be32f0dca93) fixes a false-positive test fixture: the occupancy payload had used literal escaped text with length 2, and only tested its length. It now sends actual binary occupancy values 0 and 100 (including an embedded NUL) and asserts exact roundtrip payload bytes after MapStream, alongside pose/zone retention. Production code and shared protobuf unchanged; rc_agent source unchanged.
+- New feature HEAD CI: NOT YET VERIFIED; local Qt5/ROS2 C++ execution NOT RUN in connector-only environment. Check fresh Actions for both exact HEADs; diagnose any failures. No runtime TurtleBot3, Nav2, joystick, GStreamer or hardware acceptance performed.
+- P1 IN PROGRESS, P2 TODO. Reuse operator's existing TurtleBot3/Gazebo Sim container for P1-01..08; record per-case evidence before owner review. No merges or documentation branch changes.
