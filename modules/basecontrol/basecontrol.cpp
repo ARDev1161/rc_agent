@@ -114,8 +114,9 @@ private:
     rclcpp::Time last_cmd_time_;
 };
 
-BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &grpcMutex) :
-    Node("basecontrol_monitor"),
+BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &grpcMutex,
+                                 const rclcpp::NodeOptions &options) :
+    Node("basecontrol_monitor", options),
     baseControlProtoMsg_(baseControlMsg),
     grpc_mutex_(grpcMutex),
     state_machine_(std::make_unique<ControlStateMachine>(this->now()))
