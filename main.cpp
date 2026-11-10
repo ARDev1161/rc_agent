@@ -917,11 +917,24 @@ int main(int argc, char **argv)
   auto baseControlNode = std::make_shared<BaseControlNode>(
     controlsPtr->mutable_basecontrol(),
     *network->getClientInstance()->getMutex(), base_options);
+  rclcpp::NodeOptions nav_options;
+  nav_options.parameter_overrides({
+    rclcpp::Parameter("nav2.navigate_to_pose_action",
+      endpointOrDefault(endpoint_config, "Amur.API.endpoints.navigate_to_pose_action", "navigate_to_pose")),
+    rclcpp::Parameter("nav2.navigate_through_poses_action",
+      endpointOrDefault(endpoint_config, "Amur.API.endpoints.navigate_through_poses_action", "navigate_through_poses")),
+    rclcpp::Parameter("nav2.follow_waypoints_action",
+      endpointOrDefault(endpoint_config, "Amur.API.endpoints.follow_waypoints_action", "follow_waypoints")),
+    rclcpp::Parameter("nav2.spin_action",
+      endpointOrDefault(endpoint_config, "Amur.API.endpoints.spin_action", "spin")),
+    rclcpp::Parameter("nav2.initial_pose_topic",
+      endpointOrDefault(endpoint_config, "Amur.API.endpoints.initial_pose_topic", "initialpose"))
+  });
   auto navigatorNode = std::make_shared<RobotNavigator>(
     "basic_navigator_node",
     std::shared_ptr<NavCommandRequest>(controlsPtr->mutable_navcontrol(), [](NavCommandRequest*){}),
     std::shared_ptr<NavCommandResponse>(sensorsPtr->mutable_navcontrolstatus(), [](NavCommandResponse*){}),
-    *network->getClientInstance()->getMutex()
+    *network->getClientInstance()->getMutex(), nav_options
   );
 
   // Create a MultiThreadedExecutor
