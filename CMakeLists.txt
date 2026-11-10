@@ -11,6 +11,7 @@ include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(tf2 REQUIRED)
@@ -114,7 +115,7 @@ if(BUILD_TESTING)
   )
   if(TARGET endpoint_binding_test)
     target_include_directories(endpoint_binding_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    ament_target_dependencies(endpoint_binding_test rclcpp geometry_msgs)
+    ament_target_dependencies(endpoint_binding_test rclcpp geometry_msgs nav_msgs)
     target_link_libraries(endpoint_binding_test RobotProtos)
   endif()
 
@@ -143,6 +144,7 @@ endif()
 ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   sensor_msgs
+  nav_msgs
   std_msgs
   rclcpp_action
   geometry_msgs
