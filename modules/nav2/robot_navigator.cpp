@@ -159,24 +159,14 @@ void RobotNavigator::spin(double target_yaw, double time_allowance) {
 }
 
 void RobotNavigator::cancelTask() {
-    {
-        std::lock_guard<std::mutex> lock(task_mutex_);
-        task_completed_ = true;
-    }
-    {
-        std::lock_guard<std::mutex> lock(result_mutex_);
-        result_code_ = rclcpp_action::ResultCode::CANCELED;
-    }
-
-    // Cancel for navigate_to_pose
+    // A cancellation request is not a terminal result. Nav2 may reject it or
+    // complete the goal before cancellation is processed. Only resultCallback()
+    // may publish CANCELED/SUCCEEDED/ABORTED and mark the task complete.
     navigate_to_pose_client_->async_cancel_all_goals();
-    // Cancel for navigate_through_poses
     navigate_through_poses_client_->async_cancel_all_goals();
-    // Cancel for follow_waypoints
     follow_waypoints_client_->async_cancel_all_goals();
-    // Cancel for spin
     spin_client_->async_cancel_all_goals();
-    RCLCPP_INFO(this->get_logger(), "All navigation tasks have been canceled.");
+    RCLCPP_INFO(this->get_logger(), "Requested cancellation of navigation goals; awaiting Nav2 result.");
 }
 
 bool RobotNavigator::isTaskComplete() {
