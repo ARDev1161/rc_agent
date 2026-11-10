@@ -203,3 +203,86 @@ TEST_F(Nav2EndpointBindingTest, MockNavigateToPoseSuccessAndRejection)
     EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::UNKNOWN);
     EXPECT_TRUE(rclcpp::ok());
 }
+
+
+// Cancellation must not be reported as terminal until the action server
+// acknowledges the request and returns a CANCELED result.
+TEST_F(Nav2EndpointBindingTest, MockNavigateToPoseCancelWaitsForServerResult)
+{
+    using Action = nav2_msgs::action::NavigateToPose;
+    using GoalHandle = rclcpp_action::ServerGoalHandle<Action>;
+    auto request = std::make_shared<Navigation::NavCommandRequest>();
+    auto response = std::make_shared<Navigation::NavCommandResponse>();
+    std::mutex grpc_mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("nav2.navigate_to_pose_action", "/nav2_mock_cancel/navigate_to_pose")
+    });
+    auto navigator = std::make_shared<RobotNavigator>(
+        "nav2_cancel_client", request, response, grpc_mutex, options);
+    auto server_node = std::make_shared<rclcpp::Node>("nav2_cancel_server");
+    std::shared_ptr<GoalHandle> active_goal;
+    std::atomic<int> cancel_requests{0};
+    auto server = rclcpp_action::create_server<Action>(
+        server_node, "/nav2_mock_cancel/navigate_to_pose",
+        [](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal>) {
+            return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+        },
+        [&](const std::shared_ptr<GoalHandle>) {
+            ++cancel_requests;
+            return rclcpp_action::CancelResponse::ACCEPT;
+        },
+        [&](const std::shared_ptr<GoalHandle> handle) {
+            // Do not finish immediately: cancellation is tested while pending.
+            active_goal = handle;
+        });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(navigator);
+    executor.add_node(server_node);
+    auto observer = rclcpp_action::create_client<Action>(
+        server_node, "/nav2_mock_cancel/navigate_to_pose");
+    const auto ready_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!observer->action_server_is_ready() &&
+           std::chrono::steady_clock::now() < ready_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_TRUE(observer->action_server_is_ready());
+
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = "map";
+    navigator->goToPose(pose);
+    const auto accept_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!active_goal && std::chrono::steady_clock::now() < accept_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(active_goal != nullptr);
+    EXPECT_FALSE(navigator->isTaskComplete());
+
+    navigator->cancelTask();
+    // No executor progress means the backend has not acknowledged cancellation.
+    EXPECT_FALSE(navigator->isTaskComplete());
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::UNKNOWN);
+
+    const auto cancel_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while ((!active_goal->is_canceling() || cancel_requests.load() == 0) &&
+           std::chrono::steady_clock::now() < cancel_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GT(cancel_requests.load(), 0);
+    ASSERT_TRUE(active_goal->is_canceling());
+    EXPECT_FALSE(navigator->isTaskComplete());
+
+    active_goal->canceled(std::make_shared<Action::Result>());
+    const auto result_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!navigator->isTaskComplete() &&
+           std::chrono::steady_clock::now() < result_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(navigator->isTaskComplete());
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::CANCELED);
+    EXPECT_TRUE(rclcpp::ok());
+}
