@@ -206,6 +206,12 @@ void RobotNavigator::sendGoal(
     const typename rclcpp_action::Client<ActionT>::SharedPtr & action_client,
     const std::string & info_log)
 {
+    // A new goal must never expose the previous goal's terminal result while
+    // Nav2 has not yet accepted or completed this request.
+    {
+        std::lock_guard<std::mutex> lock(result_mutex_);
+        result_code_ = rclcpp_action::ResultCode::UNKNOWN;
+    }
     // Ставим флаг, что задача ещё не завершена
     {
         std::lock_guard<std::mutex> lock(task_mutex_);
