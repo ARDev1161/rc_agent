@@ -286,3 +286,84 @@ TEST_F(Nav2EndpointBindingTest, MockNavigateToPoseCancelWaitsForServerResult)
     EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::CANCELED);
     EXPECT_TRUE(rclcpp::ok());
 }
+
+
+// A backend can reject cancellation while its goal remains executable.
+// In that case the operator must observe the actual terminal action result,
+// not a fabricated CANCELED status after requesting cancellation.
+TEST_F(Nav2EndpointBindingTest, MockNavigateToPoseRejectedCancelCanStillSucceed)
+{
+    using Action = nav2_msgs::action::NavigateToPose;
+    using GoalHandle = rclcpp_action::ServerGoalHandle<Action>;
+    auto request = std::make_shared<Navigation::NavCommandRequest>();
+    auto response = std::make_shared<Navigation::NavCommandResponse>();
+    std::mutex grpc_mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("nav2.navigate_to_pose_action",
+                          "/nav2_mock_cancel_reject/navigate_to_pose")
+    });
+    auto navigator = std::make_shared<RobotNavigator>(
+        "nav2_cancel_reject_client", request, response, grpc_mutex, options);
+    auto server_node = std::make_shared<rclcpp::Node>("nav2_cancel_reject_server");
+    std::shared_ptr<GoalHandle> active_goal;
+    std::atomic<int> cancel_requests{0};
+    auto server = rclcpp_action::create_server<Action>(
+        server_node, "/nav2_mock_cancel_reject/navigate_to_pose",
+        [](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal>) {
+            return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+        },
+        [&](const std::shared_ptr<GoalHandle>) {
+            ++cancel_requests;
+            return rclcpp_action::CancelResponse::REJECT;
+        },
+        [&](const std::shared_ptr<GoalHandle> handle) {
+            active_goal = handle;
+        });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(navigator);
+    executor.add_node(server_node);
+    auto observer = rclcpp_action::create_client<Action>(
+        server_node, "/nav2_mock_cancel_reject/navigate_to_pose");
+    const auto ready_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!observer->action_server_is_ready() &&
+           std::chrono::steady_clock::now() < ready_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_TRUE(observer->action_server_is_ready());
+
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = "map";
+    navigator->goToPose(pose);
+    const auto accept_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!active_goal && std::chrono::steady_clock::now() < accept_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(active_goal != nullptr);
+    ASSERT_FALSE(navigator->isTaskComplete());
+
+    navigator->cancelTask();
+    EXPECT_FALSE(navigator->isTaskComplete());
+    const auto cancel_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (cancel_requests.load() == 0 &&
+           std::chrono::steady_clock::now() < cancel_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GT(cancel_requests.load(), 0);
+    EXPECT_FALSE(active_goal->is_canceling());
+    EXPECT_FALSE(navigator->isTaskComplete());
+
+    active_goal->succeed(std::make_shared<Action::Result>());
+    const auto result_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (!navigator->isTaskComplete() &&
+           std::chrono::steady_clock::now() < result_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(navigator->isTaskComplete());
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_TRUE(rclcpp::ok());
+}
