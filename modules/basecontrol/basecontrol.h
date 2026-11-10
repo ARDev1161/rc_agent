@@ -27,7 +27,7 @@ public:
         READY_OK
     };
 
-    explicit BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &grpcMutex);
+    explicit BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &grpcMutex,\n                             const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
     ~BaseControlNode();
 
     void publishToBaseControlNode(const geometry_msgs::msg::Twist& twist_msg,
