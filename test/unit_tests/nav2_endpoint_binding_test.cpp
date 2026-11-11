@@ -63,6 +63,11 @@ TEST_F(Nav2EndpointBindingTest, MissingNav2ServersDoNotShutdownRosContext)
     // ROS2 Humble gtest_vendor and the host GTest printer may differ; avoid
     // instantiating an enum printer that is not linked by the vendor library.
     EXPECT_TRUE(navigator.getResult() == rclcpp_action::ResultCode::UNKNOWN);
+    // An unavailable action completes locally without a goal handle. A late
+    // operator cancel must be a no-op, not a cancellation of another goal.
+    navigator.cancelTask();
+    EXPECT_TRUE(navigator.isTaskComplete());
+    EXPECT_TRUE(navigator.getResult() == rclcpp_action::ResultCode::UNKNOWN);
     EXPECT_TRUE(rclcpp::ok());
 
     // Every optional action must fail closed independently; no global ROS shutdown.
