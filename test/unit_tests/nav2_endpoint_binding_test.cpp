@@ -566,6 +566,11 @@ TEST_F(Nav2EndpointBindingTest, CancelOnlyCurrentAcceptedGoal)
     ASSERT_TRUE(spin_until([&] { return canceled_second == 1; }));
     EXPECT_EQ(canceled_first, 0);
     EXPECT_EQ(canceled_second, 1);
+    // A repeated operator click must not send another backend cancellation.
+    navigator->cancelTask();
+    for (int i = 0; i < 20; ++i) executor.spin_some();
+    EXPECT_EQ(canceled_first, 0);
+    EXPECT_EQ(canceled_second, 1);
     EXPECT_FALSE(navigator->isTaskComplete()); // Cancel request is not a result.
 }
 
