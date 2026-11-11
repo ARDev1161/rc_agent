@@ -882,7 +882,6 @@ TEST_F(Nav2EndpointBindingTest, LatePreviousCancellationCannotCompleteReplacemen
     for (int i = 0; i < 20; ++i) executor.spin_some();
     EXPECT_FALSE(navigator->isTaskComplete());
     // A Nav2 backend may cancel a superseded goal independently.
-    goals[0]->execute();
     goals[0]->canceled(std::make_shared<Action::Result>());
     for (int i = 0; i < 30; ++i) {
         executor.spin_some();
