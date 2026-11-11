@@ -234,7 +234,12 @@ void RobotNavigator::sendGoal(
                 std::lock_guard<std::mutex> lock(active_goal_mutex_);
                 if (generation != active_goal_generation_) return;
                 if (handle) {
-                    cancel_active_goal_ = [action_client, handle]() {
+                    cancel_active_goal_ = [this, generation, action_client, handle]() {
+                        // A replacement may occur after the callback copies this
+                        // closure but before it dispatches the cancellation.
+                        // Never cancel a superseded goal in that window.
+                        std::lock_guard<std::mutex> lock(active_goal_mutex_);
+                        if (generation != active_goal_generation_) return;
                         action_client->async_cancel_goal(handle);
                     };
                     if (cancel_requested_) cancel = cancel_active_goal_;
