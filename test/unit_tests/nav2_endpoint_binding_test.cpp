@@ -698,3 +698,71 @@ TEST_F(Nav2EndpointBindingTest, TerminalSuccessWinsPendingCancellation)
     EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
     EXPECT_LE(cancel_requests, 1);
 }
+
+
+// An early cancel belongs to the generation that received it. Replacing that
+// pending goal before its response must not cancel either the old or new goal.
+TEST_F(Nav2EndpointBindingTest, PendingCancellationDoesNotLeakAcrossReplacement)
+{
+    using Action = nav2_msgs::action::NavigateToPose;
+    using Handle = rclcpp_action::ServerGoalHandle<Action>;
+    auto request = std::make_shared<Navigation::NavCommandRequest>();
+    auto response = std::make_shared<Navigation::NavCommandResponse>();
+    std::mutex grpc_mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("nav2.navigate_to_pose_action",
+                          "/nav2_mock_pending_replacement/navigate_to_pose")
+    });
+    auto navigator = std::make_shared<RobotNavigator>(
+        "nav2_pending_replacement_client", request, response, grpc_mutex, options);
+    auto server_node = std::make_shared<rclcpp::Node>("nav2_pending_replacement_server");
+    std::vector<std::shared_ptr<Handle>> goals;
+    int cancel_requests = 0;
+    auto server = rclcpp_action::create_server<Action>(
+        server_node, "/nav2_mock_pending_replacement/navigate_to_pose",
+        [](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal>) {
+            return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+        },
+        [&](const std::shared_ptr<Handle>) {
+            ++cancel_requests;
+            return rclcpp_action::CancelResponse::ACCEPT;
+        },
+        [&](const std::shared_ptr<Handle> handle) { goals.push_back(handle); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(navigator);
+    executor.add_node(server_node);
+    auto observer = rclcpp_action::create_client<Action>(
+        server_node, "/nav2_mock_pending_replacement/navigate_to_pose");
+    auto spin_until = [&](const std::function<bool()> &predicate) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+            executor.spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return predicate();
+    };
+    ASSERT_TRUE(spin_until([&] { return observer->action_server_is_ready(); }));
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = "map";
+    pose.pose.position.x = 1.0;
+    navigator->goToPose(pose);
+    navigator->cancelTask();  // No executor spin: first response is still pending.
+    pose.pose.position.x = 2.0;
+    navigator->goToPose(pose);  // Supersedes the pending cancellation.
+    ASSERT_TRUE(spin_until([&] { return goals.size() == 2; }));
+    for (int i = 0; i < 30; ++i) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_EQ(cancel_requests, 0);
+    EXPECT_FALSE(navigator->isTaskComplete());
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::UNKNOWN);
+    goals[0]->succeed(std::make_shared<Action::Result>());
+    for (int i = 0; i < 20; ++i) executor.spin_some();
+    EXPECT_FALSE(navigator->isTaskComplete());
+    goals[1]->succeed(std::make_shared<Action::Result>());
+    ASSERT_TRUE(spin_until([&] { return navigator->isTaskComplete(); }));
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_EQ(cancel_requests, 0);
+}
