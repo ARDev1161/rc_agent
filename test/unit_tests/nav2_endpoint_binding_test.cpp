@@ -568,3 +568,65 @@ TEST_F(Nav2EndpointBindingTest, CancelOnlyCurrentAcceptedGoal)
     EXPECT_EQ(canceled_second, 1);
     EXPECT_FALSE(navigator->isTaskComplete()); // Cancel request is not a result.
 }
+
+
+// Cancel may arrive before DDS delivers the goal-response callback. It must
+// remain pending and cancel precisely the newly accepted goal, not be lost.
+TEST_F(Nav2EndpointBindingTest, CancelBeforeGoalResponseIsDelivered)
+{
+    using Action = nav2_msgs::action::NavigateToPose;
+    using Handle = rclcpp_action::ServerGoalHandle<Action>;
+    auto request = std::make_shared<Navigation::NavCommandRequest>();
+    auto response = std::make_shared<Navigation::NavCommandResponse>();
+    std::mutex grpc_mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("nav2.navigate_to_pose_action",
+                          "/nav2_mock_early_cancel/navigate_to_pose")
+    });
+    auto navigator = std::make_shared<RobotNavigator>(
+        "nav2_early_cancel_client", request, response, grpc_mutex, options);
+    auto server_node = std::make_shared<rclcpp::Node>("nav2_early_cancel_server");
+    std::shared_ptr<Handle> accepted_goal;
+    int cancel_requests = 0;
+    auto server = rclcpp_action::create_server<Action>(
+        server_node, "/nav2_mock_early_cancel/navigate_to_pose",
+        [](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal>) {
+            return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+        },
+        [&](const std::shared_ptr<Handle> handle) {
+            ++cancel_requests;
+            EXPECT_EQ(handle->get_goal_id(), accepted_goal->get_goal_id());
+            return rclcpp_action::CancelResponse::ACCEPT;
+        },
+        [&](const std::shared_ptr<Handle> handle) { accepted_goal = handle; });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(navigator);
+    executor.add_node(server_node);
+    auto observer = rclcpp_action::create_client<Action>(
+        server_node, "/nav2_mock_early_cancel/navigate_to_pose");
+    auto spin_until = [&](const std::function<bool()> &predicate) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+            executor.spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return predicate();
+    };
+    ASSERT_TRUE(spin_until([&] { return observer->action_server_is_ready(); }));
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = "map";
+    navigator->goToPose(pose);
+    // Deliberately do not spin the executor between send and cancel.
+    navigator->cancelTask();
+    EXPECT_FALSE(navigator->isTaskComplete());
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::UNKNOWN);
+    ASSERT_TRUE(spin_until([&] { return accepted_goal != nullptr; }));
+    ASSERT_TRUE(spin_until([&] { return cancel_requests == 1; }));
+    EXPECT_TRUE(accepted_goal->is_canceling());
+    EXPECT_FALSE(navigator->isTaskComplete());
+    accepted_goal->canceled(std::make_shared<Action::Result>());
+    ASSERT_TRUE(spin_until([&] { return navigator->isTaskComplete(); }));
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::CANCELED);
+    EXPECT_EQ(cancel_requests, 1);
+}
