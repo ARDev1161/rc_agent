@@ -876,12 +876,16 @@ TEST_F(Nav2EndpointBindingTest, LatePreviousCancellationCannotCompleteReplacemen
     pose.pose.position.x = 1.0;
     navigator->goToPose(pose);
     ASSERT_TRUE(spin_until([&] { return goals.size() == 1; }));
+    // Ensure the first goal response has installed the handle before cancel.
+    for (int i = 0; i < 20; ++i) executor.spin_some();
+    navigator->cancelTask();
+    ASSERT_TRUE(spin_until([&] { return goals[0]->is_canceling(); }));
     pose.pose.position.x = 2.0;
     navigator->goToPose(pose);
     ASSERT_TRUE(spin_until([&] { return goals.size() == 2; }));
     for (int i = 0; i < 20; ++i) executor.spin_some();
     EXPECT_FALSE(navigator->isTaskComplete());
-    // A Nav2 backend may cancel a superseded goal independently.
+    // The first backend now reports the cancellation after replacement.
     goals[0]->canceled(std::make_shared<Action::Result>());
     for (int i = 0; i < 30; ++i) {
         executor.spin_some();
