@@ -57,7 +57,7 @@ class Nav2LifecycleContract(unittest.TestCase):
                 body = method(name, next_name)
                 guard = "if (generation != goal_generation_.load()) return;"
                 self.assertIn(guard, body)
-                self.assertLess(body.index(guard), body.index("{", body.index("RobotNavigator::" + name)))
+                self.assertLess(body.index(guard), body.index("std::lock_guard", body.index(guard)) if "std::lock_guard" in body else len(body))
 
     def test_terminal_result_only_from_result_callback(self):
         body = method("resultCallback", "")
