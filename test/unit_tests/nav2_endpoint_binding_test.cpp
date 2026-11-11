@@ -1006,6 +1006,6 @@ TEST_F(Nav2EndpointBindingTest, LatePreviousCancellationCannotCompleteReplacemen
     ASSERT_TRUE(spin_until([&] { return navigator->isTaskComplete(); }));
     EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
     ASSERT_EQ(canceled_handles.size(), 1u);
-    EXPECT_EQ(canceled_handles.front(), goals[0]);
-    EXPECT_NE(canceled_handles.front(), goals[1]);
+    EXPECT_TRUE(canceled_handles.front() == goals[0]);
+    EXPECT_TRUE(canceled_handles.front() != goals[1]);
 }
