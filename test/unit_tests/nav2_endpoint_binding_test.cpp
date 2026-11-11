@@ -152,13 +152,15 @@ TEST_F(Nav2EndpointBindingTest, MockNavigateToPoseSuccessAndRejection)
     auto server_node = std::make_shared<rclcpp::Node>("nav2_mock_server");
     std::atomic<bool> reject{false};
     std::atomic<int> accepted{0};
+    std::atomic<int> cancel_requests{0};
     auto server = rclcpp_action::create_server<Action>(
         server_node, "/nav2_mock_test/navigate_to_pose",
         [&](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal>) {
             return reject.load() ? rclcpp_action::GoalResponse::REJECT
                                  : rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
         },
-        [](const std::shared_ptr<GoalHandle>) {
+        [&](const std::shared_ptr<GoalHandle>) {
+            ++cancel_requests;
             return rclcpp_action::CancelResponse::ACCEPT;
         },
         [&](const std::shared_ptr<GoalHandle> handle) {
@@ -189,6 +191,10 @@ TEST_F(Nav2EndpointBindingTest, MockNavigateToPoseSuccessAndRejection)
     }
     EXPECT_EQ(accepted.load(), 1);
     EXPECT_TRUE(navigator->isTaskComplete());
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    navigator->cancelTask();
+    for (int i = 0; i < 10; ++i) executor.spin_some();
+    EXPECT_EQ(cancel_requests.load(), 0);
     EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
 
     reject = true;
