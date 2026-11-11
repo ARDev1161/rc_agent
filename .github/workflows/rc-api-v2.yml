@@ -45,8 +45,8 @@ jobs:
           echo "Mirrored protobuf contracts match"
       - name: Install protobuf compiler + C++ library
         run: |
-          sudo apt-get update
-          sudo apt-get install -y protobuf-compiler libprotobuf-dev python3-protobuf g++
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y protobuf-compiler libprotobuf-dev python3-protobuf g++
       - name: Generate all Protobuf C++ and Python types
         shell: bash
         run: |
@@ -70,8 +70,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install gRPC and Protobuf toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y g++ pkg-config libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y g++ pkg-config libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
       - name: Generate C++ RPC types
         run: |
           set -euo pipefail
@@ -97,8 +97,8 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install C++ config and GTest dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y g++ libconfig++-dev libgtest-dev
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y g++ libconfig++-dev libgtest-dev
       - name: Compile config parser and existing unit tests
         shell: bash
         run: |
@@ -118,8 +118,8 @@ jobs:
       - name: Install ROS2/Nav2, C++ and system gRPC
         shell: bash
         run: |
-          apt-get update
-          apt-get install -y python3-colcon-common-extensions ros-humble-nav2-msgs \
+          apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
+          apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y python3-colcon-common-extensions ros-humble-nav2-msgs \
             ros-humble-rclcpp-action ros-humble-ament-cmake-gtest ros-humble-tf2-ros \
             ros-humble-sensor-msgs ros-humble-std-msgs ros-humble-lifecycle-msgs ros-humble-action-msgs \
             libboost-system-dev libconfig++-dev nlohmann-json3-dev \
@@ -162,8 +162,8 @@ jobs:
           persist-credentials: false
       - name: Install C++ gRPC toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y g++ pkg-config libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y g++ pkg-config libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
       - name: Compile and execute real peers over localhost
         shell: bash
         run: |
