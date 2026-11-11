@@ -687,9 +687,9 @@ TEST_F(Nav2EndpointBindingTest, TerminalSuccessWinsPendingCancellation)
     // No executor spin: publish a real terminal result while cancellation is pending.
     accepted_goal->succeed(std::make_shared<Action::Result>());
     ASSERT_TRUE(spin_until([&] { return navigator->isTaskComplete(); }));
-    EXPECT_EQ(navigator->getResult(), rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
     for (int i = 0; i < 20; ++i) executor.spin_some();
     EXPECT_TRUE(navigator->isTaskComplete());
-    EXPECT_EQ(navigator->getResult(), rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
     EXPECT_LE(cancel_requests, 1);
 }
