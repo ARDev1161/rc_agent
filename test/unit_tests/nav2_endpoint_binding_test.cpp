@@ -782,6 +782,78 @@ TEST_F(Nav2EndpointBindingTest, PendingCancellationDoesNotLeakAcrossReplacement)
 }
 
 
+// A rejected goal has no result callback. A later accepted goal on the SAME
+// navigator must clear the rejected terminal state and finish successfully.
+TEST_F(Nav2EndpointBindingTest, RejectedGoalThenAcceptedGoalSucceeds)
+{
+    using Action = nav2_msgs::action::NavigateToPose;
+    using Handle = rclcpp_action::ServerGoalHandle<Action>;
+    auto request = std::make_shared<Navigation::NavCommandRequest>();
+    auto response = std::make_shared<Navigation::NavCommandResponse>();
+    std::mutex grpc_mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("nav2.navigate_to_pose_action",
+                          "/nav2_mock_reject_recover/navigate_to_pose")
+    });
+    auto navigator = std::make_shared<RobotNavigator>(
+        "nav2_reject_recover_client", request, response, grpc_mutex, options);
+    auto server_node = std::make_shared<rclcpp::Node>("nav2_reject_recover_server");
+    int requests_seen = 0;
+    int accepted = 0;
+    auto server = rclcpp_action::create_server<Action>(
+        server_node, "/nav2_mock_reject_recover/navigate_to_pose",
+        [&](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal>) {
+            ++requests_seen;
+            return requests_seen == 1
+                ? rclcpp_action::GoalResponse::REJECT
+                : rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+        },
+        [](const std::shared_ptr<Handle>) {
+            return rclcpp_action::CancelResponse::ACCEPT;
+        },
+        [&](const std::shared_ptr<Handle> handle) {
+            ++accepted;
+            handle->succeed(std::make_shared<Action::Result>());
+        });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(navigator);
+    executor.add_node(server_node);
+    auto observer = rclcpp_action::create_client<Action>(
+        server_node, "/nav2_mock_reject_recover/navigate_to_pose");
+    auto spin_until = [&](const std::function<bool()> &predicate) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+            executor.spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return predicate();
+    };
+    ASSERT_TRUE(spin_until([&] { return observer->action_server_is_ready(); }));
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = "map";
+    navigator->goToPose(pose);
+    ASSERT_TRUE(spin_until([&] {
+        return requests_seen == 1 && navigator->isTaskComplete();
+    }));
+    EXPECT_EQ(accepted, 0);
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::UNKNOWN);
+    navigator->cancelTask(); // Rejected goal has nothing to cancel.
+    EXPECT_TRUE(navigator->isTaskComplete());
+
+    pose.pose.position.x = 2.0;
+    navigator->goToPose(pose);
+    EXPECT_FALSE(navigator->isTaskComplete());
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::UNKNOWN);
+    ASSERT_TRUE(spin_until([&] {
+        return accepted == 1 && navigator->isTaskComplete();
+    }));
+    EXPECT_EQ(requests_seen, 2);
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_TRUE(rclcpp::ok());
+}
+
+
 // A missing optional Nav2 server must not poison later requests. This tests
 // recovery on the SAME navigator after the action server becomes available.
 TEST_F(Nav2EndpointBindingTest, OfflineGoalThenServerAppearsAndNextGoalSucceeds)
