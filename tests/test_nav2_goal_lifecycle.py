@@ -45,6 +45,20 @@ class Nav2LifecycleContract(unittest.TestCase):
         self.assertIn("result_code_ = rclcpp_action::ResultCode::UNKNOWN;", rejected)
         self.assertIn("task_completed_ = true;", rejected)
 
+    def test_stale_goal_callbacks_cannot_update_replacement(self):
+        # Every asynchronous Nav2 callback must reject a superseded generation
+        # before touching feedback, task completion or terminal result.
+        for name, next_name in (
+            ("goalResponseCallback", "template <typename T>\nvoid RobotNavigator::feedbackCallback"),
+            ("feedbackCallback", "template <typename T>\nvoid RobotNavigator::resultCallback"),
+            ("resultCallback", ""),
+        ):
+            with self.subTest(callback=name):
+                body = method(name, next_name)
+                guard = "if (generation != goal_generation_.load()) return;"
+                self.assertIn(guard, body)
+                self.assertLess(body.index(guard), body.index("{", body.index("RobotNavigator::" + name)))
+
     def test_terminal_result_only_from_result_callback(self):
         body = method("resultCallback", "")
         self.assertIn("result_code_ = result.code;", body)
