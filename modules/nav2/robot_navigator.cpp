@@ -140,6 +140,12 @@ void RobotNavigator::spin(double target_yaw, double time_allowance) {
 }
 
 void RobotNavigator::cancelTask() {
+    // A completed action has no current goal to cancel. In particular, a
+    // second cancel after SUCCEEDED/CANCELED must not reach the backend.
+    {
+        std::lock_guard<std::mutex> lock(task_mutex_);
+        if (task_completed_) return;
+    }
     // A cancellation request is not a terminal result. Nav2 may reject it or
     // complete the goal before cancellation is processed. Only resultCallback()
     // may publish CANCELED/SUCCEEDED/ABORTED and mark the task complete.
