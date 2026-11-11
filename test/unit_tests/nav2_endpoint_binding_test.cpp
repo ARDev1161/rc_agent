@@ -827,3 +827,70 @@ TEST_F(Nav2EndpointBindingTest, OfflineGoalThenServerAppearsAndNextGoalSucceeds)
     EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
     EXPECT_TRUE(rclcpp::ok());
 }
+
+
+// A stale CANCELED result must not mark a replacement goal complete.
+// This is distinct from a stale SUCCEEDED result: cancellation callbacks may
+// arrive after the operator has already issued a new Nav2 command.
+TEST_F(Nav2EndpointBindingTest, LatePreviousCancellationCannotCompleteReplacement)
+{
+    using Action = nav2_msgs::action::NavigateToPose;
+    using Handle = rclcpp_action::ServerGoalHandle<Action>;
+    auto request = std::make_shared<Navigation::NavCommandRequest>();
+    auto response = std::make_shared<Navigation::NavCommandResponse>();
+    std::mutex grpc_mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("nav2.navigate_to_pose_action",
+                          "/nav2_mock_stale_cancel/navigate_to_pose")
+    });
+    auto navigator = std::make_shared<RobotNavigator>(
+        "nav2_stale_cancel_client", request, response, grpc_mutex, options);
+    auto server_node = std::make_shared<rclcpp::Node>("nav2_stale_cancel_server");
+    std::vector<std::shared_ptr<Handle>> goals;
+    auto server = rclcpp_action::create_server<Action>(
+        server_node, "/nav2_mock_stale_cancel/navigate_to_pose",
+        [](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal>) {
+            return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+        },
+        [](const std::shared_ptr<Handle>) {
+            return rclcpp_action::CancelResponse::ACCEPT;
+        },
+        [&](const std::shared_ptr<Handle> handle) { goals.push_back(handle); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(navigator);
+    executor.add_node(server_node);
+    auto observer = rclcpp_action::create_client<Action>(
+        server_node, "/nav2_mock_stale_cancel/navigate_to_pose");
+    auto spin_until = [&](const std::function<bool()> &predicate) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+            executor.spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return predicate();
+    };
+    ASSERT_TRUE(spin_until([&] { return observer->action_server_is_ready(); }));
+    geometry_msgs::msg::PoseStamped pose;
+    pose.header.frame_id = "map";
+    pose.pose.position.x = 1.0;
+    navigator->goToPose(pose);
+    ASSERT_TRUE(spin_until([&] { return goals.size() == 1; }));
+    pose.pose.position.x = 2.0;
+    navigator->goToPose(pose);
+    ASSERT_TRUE(spin_until([&] { return goals.size() == 2; }));
+    for (int i = 0; i < 20; ++i) executor.spin_some();
+    EXPECT_FALSE(navigator->isTaskComplete());
+    // A Nav2 backend may cancel a superseded goal independently.
+    goals[0]->execute();
+    goals[0]->canceled(std::make_shared<Action::Result>());
+    for (int i = 0; i < 30; ++i) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_FALSE(navigator->isTaskComplete());
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::UNKNOWN);
+    goals[1]->succeed(std::make_shared<Action::Result>());
+    ASSERT_TRUE(spin_until([&] { return navigator->isTaskComplete(); }));
+    EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+}
