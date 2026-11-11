@@ -30,6 +30,15 @@ class Nav2LifecycleContract(unittest.TestCase):
         self.assertNotIn("async_cancel_all_goals()", body)
         self.assertNotRegex(body, r"(?m)^\s*(?:result_code_|task_completed_)\s*=")
 
+    def test_deferred_cancel_checks_generation_at_dispatch(self):
+        body = method("sendGoal", "template <typename T>\nvoid RobotNavigator::goalResponseCallback")
+        closure = body.split("cancel_active_goal_ = [this, generation, action_client, handle]", 1)[1]
+        closure = closure.split("};", 1)[0]
+        self.assertIn("lock(active_goal_mutex_)", closure)
+        self.assertIn("generation != active_goal_generation_", closure)
+        self.assertLess(closure.index("generation != active_goal_generation_"),
+                        closure.index("async_cancel_goal(handle)"))
+
     def test_rejected_goal_is_completed_as_unknown(self):
         body = method("goalResponseCallback", "template <typename T>\nvoid RobotNavigator::feedbackCallback")
         rejected = body.split("if (!goal_handle)", 1)[1].split("} else {", 1)[0]
