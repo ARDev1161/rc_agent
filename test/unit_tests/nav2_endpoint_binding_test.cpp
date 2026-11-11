@@ -955,12 +955,14 @@ TEST_F(Nav2EndpointBindingTest, LatePreviousCancellationCannotCompleteReplacemen
         "nav2_stale_cancel_client", request, response, grpc_mutex, options);
     auto server_node = std::make_shared<rclcpp::Node>("nav2_stale_cancel_server");
     std::vector<std::shared_ptr<Handle>> goals;
+    std::vector<std::shared_ptr<Handle>> canceled_handles;
     auto server = rclcpp_action::create_server<Action>(
         server_node, "/nav2_mock_stale_cancel/navigate_to_pose",
         [](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal>) {
             return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
         },
-        [](const std::shared_ptr<Handle>) {
+        [&](const std::shared_ptr<Handle> handle) {
+            canceled_handles.push_back(handle);
             return rclcpp_action::CancelResponse::ACCEPT;
         },
         [&](const std::shared_ptr<Handle> handle) { goals.push_back(handle); });
@@ -1003,4 +1005,7 @@ TEST_F(Nav2EndpointBindingTest, LatePreviousCancellationCannotCompleteReplacemen
     goals[1]->succeed(std::make_shared<Action::Result>());
     ASSERT_TRUE(spin_until([&] { return navigator->isTaskComplete(); }));
     EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    ASSERT_EQ(canceled_handles.size(), 1u);
+    EXPECT_EQ(canceled_handles.front(), goals[0]);
+    EXPECT_NE(canceled_handles.front(), goals[1]);
 }
