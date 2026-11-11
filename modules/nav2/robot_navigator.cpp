@@ -153,6 +153,8 @@ void RobotNavigator::cancelTask() {
     {
         std::lock_guard<std::mutex> lock(active_goal_mutex_);
         if (active_goal_generation_ != goal_generation_.load()) return;
+        // Repeated operator requests must not send duplicate cancel RPCs.
+        if (cancel_requested_) return;
         cancel_requested_ = true;
         cancel = cancel_active_goal_;
     }
