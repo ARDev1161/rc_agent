@@ -440,6 +440,27 @@ TEST_F(Nav2EndpointBindingTest, LatePreviousGoalResultDoesNotCompleteReplacement
     navigator->goToPose(second);
     ASSERT_TRUE(spin_until([&] { return goals.size() == 2; }));
     EXPECT_FALSE(navigator->isTaskComplete());
+    // An old goal may still publish feedback after a replacement. The new
+    // navigator state must not display the superseded robot position.
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    auto old_feedback = std::make_shared<Action::Feedback>();
+    old_feedback->current_pose.pose.position.x = 99.0;
+    goals[0]->publish_feedback(old_feedback);
+    for (int i = 0; i < 30; ++i) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_NE(navigator->getCurrentPose().position.x, 99.0);
+    auto new_feedback = std::make_shared<Action::Feedback>();
+    new_feedback->current_pose.pose.position.x = 2.0;
+    goals[1]->publish_feedback(new_feedback);
+    const auto feedback_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (navigator->getCurrentPose().position.x != 2.0 &&
+           std::chrono::steady_clock::now() < feedback_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_DOUBLE_EQ(navigator->getCurrentPose().position.x, 2.0);
     goals[0]->succeed(std::make_shared<Action::Result>());
     // Allow the stale result callback to run before inspecting state.
     for (int i = 0; i < 20; ++i) {
