@@ -696,3 +696,72 @@ TEST(ConfigEndpointProfiles, Nav2MalformedEndpointValuesFailClosed) {
   }
   fs::remove(path);
 }
+
+
+// P2: verify the same production libconfig->MapNode profile for two distinct
+// ROS graph configurations, including TF frame pairs and zones.
+TEST(ConfigEndpointProfiles, MapAndTfBindingsLoadIndependently) {
+  const auto path_a = fs::temp_directory_path() / "rc_agent_p2_map_alpha.cfg";
+  const auto path_b = fs::temp_directory_path() / "rc_agent_p2_map_beta.cfg";
+  {
+    std::ofstream out(path_a);
+    out << R"(Amur: { API: { endpoints: {
+      map_topic = "/alpha/map"; zones_topic = "/alpha/zones";
+      tf_map_frame = "alpha/map"; tf_robot_frame = "alpha/base_link";
+    }; }; };)";
+  }
+  {
+    std::ofstream out(path_b);
+    out << R"(Amur: { API: { endpoints: {
+      map_topic = "/beta/map"; zones_topic = "/beta/zones";
+      tf_map_frame = "beta/map"; tf_robot_frame = "beta/base_link";
+    }; }; };)";
+  }
+  ConfigProcessor a(path_a.string());
+  ConfigProcessor b(path_b.string());
+  const auto alpha = loadMapEndpointProfile(a);
+  const auto beta = loadMapEndpointProfile(b);
+  EXPECT_EQ(alpha.map_topic, "/alpha/map");
+  EXPECT_EQ(alpha.zones_topic, "/alpha/zones");
+  EXPECT_EQ(alpha.tf_map_frame, "alpha/map");
+  EXPECT_EQ(alpha.tf_robot_frame, "alpha/base_link");
+  EXPECT_EQ(beta.map_topic, "/beta/map");
+  EXPECT_EQ(beta.zones_topic, "/beta/zones");
+  EXPECT_EQ(beta.tf_map_frame, "beta/map");
+  EXPECT_EQ(beta.tf_robot_frame, "beta/base_link");
+  fs::remove(path_a);
+  fs::remove(path_b);
+}
+
+TEST(ConfigEndpointProfiles, MapMissingKeysRetainLegacyDefaults) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_map_defaults.cfg";
+  {
+    std::ofstream out(path);
+    out << R"(Amur: { API: { endpoints: { map_topic = "/custom/map"; }; }; };)";
+  }
+  ConfigProcessor config(path.string());
+  const auto profile = loadMapEndpointProfile(config);
+  EXPECT_EQ(profile.map_topic, "/custom/map");
+  EXPECT_EQ(profile.zones_topic, "/mapannotator/rc_agent_zones");
+  EXPECT_EQ(profile.tf_map_frame, "map");
+  EXPECT_EQ(profile.tf_robot_frame, "base_link");
+  fs::remove(path);
+}
+
+TEST(ConfigEndpointProfiles, MapMalformedEndpointValuesFailClosed) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_map_invalid.cfg";
+  for (const auto &key : {"map_topic", "zones_topic",
+                          "tf_map_frame", "tf_robot_frame"}) {
+    for (const auto &invalid : {"true", "\"\""}) {
+      {
+        std::ofstream out(path);
+        out << "Amur: { API: { endpoints: { " << key
+            << " = " << invalid << "; }; }; };";
+      }
+      ConfigProcessor config(path.string());
+      EXPECT_THROW(loadMapEndpointProfile(config), std::invalid_argument)
+          << "key=" << key << " value=" << invalid;
+    }
+  }
+  fs::remove(path);
+}
