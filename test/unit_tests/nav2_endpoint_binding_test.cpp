@@ -1208,6 +1208,9 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
     ASSERT_TRUE(spin_until([&] { return navigator_a->isTaskComplete(); }));
     EXPECT_TRUE(navigator_a->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
     EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::ABORTED);
+    // Neither completed nor aborted goals may cancel the other backend.
+    EXPECT_EQ(cancel_requests_a, 0);
+    EXPECT_EQ(cancel_requests_b, 0);
 
     // Cancel only B while a third pair of goals is concurrently active.
     // Cancellation must neither cancel A nor complete A prematurely.
@@ -1224,6 +1227,8 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
     }));
     navigator_b->cancelTask();
     ASSERT_TRUE(spin_until([&] { return pending_b->is_canceling(); }));
+    EXPECT_EQ(cancel_requests_a, 0);
+    EXPECT_EQ(cancel_requests_b, 1);
     EXPECT_FALSE(navigator_a->isTaskComplete());
     EXPECT_TRUE(navigator_a->getResult() == rclcpp_action::ResultCode::UNKNOWN);
     pending_b->canceled(std::make_shared<Action::Result>());
@@ -1248,6 +1253,8 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
     EXPECT_FALSE(navigator_b->isTaskComplete());
     navigator_a->cancelTask();
     ASSERT_TRUE(spin_until([&] { return pending_a->is_canceling(); }));
+    EXPECT_EQ(cancel_requests_a, 1);
+    EXPECT_EQ(cancel_requests_b, 1);
     EXPECT_FALSE(navigator_b->isTaskComplete());
     EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::UNKNOWN);
     pending_a->canceled(std::make_shared<Action::Result>());
