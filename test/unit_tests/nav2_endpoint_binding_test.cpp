@@ -283,6 +283,7 @@ TEST_F(Nav2EndpointBindingTest, MockNavigateToPoseCancelWaitsForServerResult)
     EXPECT_FALSE(navigator->isTaskComplete());
 
     navigator->cancelTask();
+    navigator->cancelTask(); // Repeated operator clicks must not issue duplicate cancel RPCs.
     // No executor progress means the backend has not acknowledged cancellation.
     EXPECT_FALSE(navigator->isTaskComplete());
     EXPECT_TRUE(navigator->getResult() == rclcpp_action::ResultCode::UNKNOWN);
@@ -293,7 +294,7 @@ TEST_F(Nav2EndpointBindingTest, MockNavigateToPoseCancelWaitsForServerResult)
         executor.spin_some();
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    ASSERT_GT(cancel_requests.load(), 0);
+    ASSERT_EQ(cancel_requests.load(), 1);
     ASSERT_TRUE(active_goal->is_canceling());
     EXPECT_FALSE(navigator->isTaskComplete());
 
