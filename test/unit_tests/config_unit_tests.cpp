@@ -503,3 +503,40 @@ TEST(ConfigMalformedScalars, RejectWrongTypeWithoutAbortingAgent) {
   EXPECT_TRUE(enabled);
   fs::remove(path);
 }
+
+
+// P2: distinct robot profiles retain their configured endpoint strings;
+// malformed endpoint types must not overwrite a previously valid value.
+TEST(ConfigEndpointProfiles, IndependentBindingsAndMalformedType) {
+  const auto path_a = fs::temp_directory_path() / "rc_agent_v2_profile_a_endpoints.cfg";
+  const auto path_b = fs::temp_directory_path() / "rc_agent_v2_profile_b_endpoints.cfg";
+  {
+    std::ofstream out(path_a);
+    out << "Amur: { API: { endpoints: { odom_topic = \"/alpha/odom\";"
+           " cmd_vel_topic = \"/alpha/cmd_vel\";"
+           " navigate_to_pose_action = \"/alpha/navigate_to_pose\"; }; }; };\n";
+  }
+  {
+    std::ofstream out(path_b);
+    out << "Amur: { API: { endpoints: { odom_topic = \"/beta/odom\";"
+           " cmd_vel_topic = 17;"
+           " navigate_to_pose_action = \"/beta/navigate_to_pose\"; }; }; };\n";
+  }
+  ConfigProcessor a(path_a.string());
+  ConfigProcessor b(path_b.string());
+  std::string value;
+  EXPECT_EQ(EXIT_SUCCESS, a.searchString("Amur.API.endpoints.odom_topic", value));
+  EXPECT_EQ("/alpha/odom", value);
+  EXPECT_EQ(EXIT_SUCCESS, a.searchString("Amur.API.endpoints.cmd_vel_topic", value));
+  EXPECT_EQ("/alpha/cmd_vel", value);
+  EXPECT_EQ(EXIT_SUCCESS, a.searchString("Amur.API.endpoints.navigate_to_pose_action", value));
+  EXPECT_EQ("/alpha/navigate_to_pose", value);
+  EXPECT_EQ(EXIT_SUCCESS, b.searchString("Amur.API.endpoints.odom_topic", value));
+  EXPECT_EQ("/beta/odom", value);
+  EXPECT_EQ(EXIT_FAILURE, b.searchString("Amur.API.endpoints.cmd_vel_topic", value));
+  EXPECT_EQ("/beta/odom", value);
+  EXPECT_EQ(EXIT_SUCCESS, b.searchString("Amur.API.endpoints.navigate_to_pose_action", value));
+  EXPECT_EQ("/beta/navigate_to_pose", value);
+  fs::remove(path_a);
+  fs::remove(path_b);
+}
