@@ -613,3 +613,86 @@ TEST(ConfigEndpointProfiles, InvalidAuxiliaryBindingsFailClosed) {
   }
   fs::remove(path);
 }
+
+
+// P2 production path: the same libconfig Nav2 resolver is used by main.cpp,
+// not test-only hard-coded NodeOptions. Two robot profiles configure every
+// supported action and localization endpoint without recompilation.
+TEST(ConfigEndpointProfiles, Nav2ActionsLoadIndependently) {
+  const auto path_a = fs::temp_directory_path() / "rc_agent_p2_nav_alpha.cfg";
+  const auto path_b = fs::temp_directory_path() / "rc_agent_p2_nav_beta.cfg";
+  {
+    std::ofstream out(path_a);
+    out << R"(Amur: { API: { endpoints: {
+      navigate_to_pose_action = "/alpha/navigate_to_pose";
+      navigate_through_poses_action = "/alpha/navigate_through_poses";
+      follow_waypoints_action = "/alpha/follow_waypoints";
+      spin_action = "/alpha/spin";
+      initial_pose_topic = "/alpha/initialpose";
+    }; }; };)";
+  }
+  {
+    std::ofstream out(path_b);
+    out << R"(Amur: { API: { endpoints: {
+      navigate_to_pose_action = "/beta/navigate_to_pose";
+      navigate_through_poses_action = "/beta/navigate_through_poses";
+      follow_waypoints_action = "/beta/follow_waypoints";
+      spin_action = "/beta/spin";
+      initial_pose_topic = "/beta/initialpose";
+    }; }; };)";
+  }
+  ConfigProcessor a(path_a.string());
+  ConfigProcessor b(path_b.string());
+  const auto alpha = loadNav2EndpointProfile(a);
+  const auto beta = loadNav2EndpointProfile(b);
+  EXPECT_EQ(alpha.navigate_to_pose_action, "/alpha/navigate_to_pose");
+  EXPECT_EQ(alpha.navigate_through_poses_action, "/alpha/navigate_through_poses");
+  EXPECT_EQ(alpha.follow_waypoints_action, "/alpha/follow_waypoints");
+  EXPECT_EQ(alpha.spin_action, "/alpha/spin");
+  EXPECT_EQ(alpha.initial_pose_topic, "/alpha/initialpose");
+  EXPECT_EQ(beta.navigate_to_pose_action, "/beta/navigate_to_pose");
+  EXPECT_EQ(beta.navigate_through_poses_action, "/beta/navigate_through_poses");
+  EXPECT_EQ(beta.follow_waypoints_action, "/beta/follow_waypoints");
+  EXPECT_EQ(beta.spin_action, "/beta/spin");
+  EXPECT_EQ(beta.initial_pose_topic, "/beta/initialpose");
+  fs::remove(path_a);
+  fs::remove(path_b);
+}
+
+TEST(ConfigEndpointProfiles, Nav2MissingKeysRetainLegacyDefaults) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_nav_defaults.cfg";
+  {
+    std::ofstream out(path);
+    out << R"(Amur: { API: { endpoints: {
+      navigate_to_pose_action = "/custom/navigate_to_pose";
+    }; }; };)";
+  }
+  ConfigProcessor config(path.string());
+  const auto profile = loadNav2EndpointProfile(config);
+  EXPECT_EQ(profile.navigate_to_pose_action, "/custom/navigate_to_pose");
+  EXPECT_EQ(profile.navigate_through_poses_action, "navigate_through_poses");
+  EXPECT_EQ(profile.follow_waypoints_action, "follow_waypoints");
+  EXPECT_EQ(profile.spin_action, "spin");
+  EXPECT_EQ(profile.initial_pose_topic, "initialpose");
+  fs::remove(path);
+}
+
+TEST(ConfigEndpointProfiles, Nav2MalformedEndpointValuesFailClosed) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_nav_invalid.cfg";
+  for (const auto &key : {"navigate_to_pose_action",
+                          "navigate_through_poses_action",
+                          "follow_waypoints_action", "spin_action",
+                          "initial_pose_topic"}) {
+    for (const auto &invalid : {"42", "\"\""}) {
+      {
+        std::ofstream out(path);
+        out << "Amur: { API: { endpoints: { " << key
+            << " = " << invalid << "; }; }; };";
+      }
+      ConfigProcessor config(path.string());
+      EXPECT_THROW(loadNav2EndpointProfile(config), std::invalid_argument)
+          << "key=" << key << " value=" << invalid;
+    }
+  }
+  fs::remove(path);
+}
