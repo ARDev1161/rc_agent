@@ -256,6 +256,13 @@ void BaseControlNode::checkBaseControlUpdates() {
       currentVel = protoToBaseVel(*baseControlProtoMsg_);
     }
 
+    // Reject non-finite legacy protobuf inputs before the change detector.
+    // Otherwise NaN can poison last_cmd_* and suppress future finite commands.
+    if (!std::isfinite(currentVel.linear) || !std::isfinite(currentVel.angular)) {
+        RCLCPP_ERROR(get_logger(), "Rejecting non-finite legacy basecontrol input");
+        return;
+    }
+
     if (std::abs(currentVel.linear - last_cmd_linear_) > kCommandVelocityEpsilon ||
         std::abs(currentVel.angular - last_cmd_angular_) > kCommandVelocityEpsilon)
     {
