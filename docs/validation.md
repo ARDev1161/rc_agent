@@ -6,7 +6,7 @@ The canonical [P0–P6 roadmap](https://github.com/ARDev1161/AmurCore/blob/feat/
 | --- | --- | --- |
 | P0 | Done | branches and architecture frozen |
 | P1 | **In progress** | protobuf mirror, old/new wire, Qt/ROS2, loopback, real robot/manual smoke |
-| P2 | Not started | configurable trusted ROS2 endpoints |
+| P2 | **In progress** (authorized overlap; P1 manual pending) | trusted local ROS2 endpoint profiles, two robot profiles, real Nav2 result/cancellation tests |
 | P3 | Not started | independent multi-robot sessions |
 | P4 | Not started | tasks/dialogue adapter |
 | P5 | Not started | change-only streams and safe teleop |
@@ -85,3 +85,9 @@ An existing ROS2 `/gst/pipeline` subscriber was writing directly into the outgoi
 An actual ROS2 pub/sub `video_pipeline_snapshot_test` checks the initial absence, normal and long pipeline updates, empty message ignored, preservation of robot identity/battery and a sender mutex held while the callback is pending. The counterpart real `AmurCore` gRPC integration checks legacy/v2 video metadata snapshots. [Tested source `8a7dffe9da07`](https://github.com/ARDev1161/rc_agent/commit/8a7dffe9da07caf121d3307d2307652d9fcd0c48) — [CI 42503503640](https://github.com/ARDev1161/rc_agent/actions/runs/42503503640), **all five jobs SUCCESS**, including ROS2 Humble colcon, config, protobuf and real-peer tests.
 
 This is protobuf metadata synchronization only; it does **not** test an actual camera/GStreamer pipeline, video playback, stream gating or physical robot. Hardware/manual P1-01–P1-08 remain NOT RUN and P1 IN PROGRESS.
+
+## P2 auxiliary velocity profile binding — 2026-11-13
+
+The gateway binds the legacy `cmd_vel`, `cmd_vel_smoothed` and `cmd_vel_unsafety` selectors only to trusted local ROS2 endpoints from the libconfig robot profile. `cmd_vel_smoothed_topic` and `cmd_vel_nav_topic` are now exposed in the gateway's `Amur.API.endpoints` settings and passed to the ROS2 adapter; omitted values retain legacy defaults. Two independent config files and invalid-type/empty values are covered by gateway C++ GTests. This does **not** implement v2 velocity authorization.
+
+[Functional rc_agent test revision `15327dc0`](https://github.com/ARDev1161/rc_agent/commit/15327dc0eebd7b36294c742177d19f8607bb0692) · [source CI #43327905089](https://github.com/ARDev1161/rc_agent/actions/runs/43327905089) (verify completion for this revision). P1 software/manual and physical gates remain open.
