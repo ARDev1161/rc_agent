@@ -154,8 +154,16 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
         cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(cmd_vel_topic_, 10);
     }
 
-    cmd_vel_smoothed_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel_smoothed", 10);
-    cmd_vel_unsafety_pub_ = this->create_publisher<geometry_msgs::msg::Twist>("/cmd_vel_nav", 10);
+    // Auxiliary legacy outputs are local ROS parameter bindings, never remote selectors.
+    const auto smoothed_topic = this->declare_parameter<std::string>(
+        "basecontrol.cmd_vel_smoothed_topic", "/cmd_vel_smoothed");
+    const auto nav_topic = this->declare_parameter<std::string>(
+        "basecontrol.cmd_vel_nav_topic", "/cmd_vel_nav");
+    if (smoothed_topic.empty() || nav_topic.empty()) {
+        throw std::invalid_argument("basecontrol auxiliary velocity topics must not be empty");
+    }
+    cmd_vel_smoothed_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(smoothed_topic, 10);
+    cmd_vel_unsafety_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(nav_topic, 10);
 
     last_cmd_time_ = this->now();
     if (input_max_ <= input_min_) {
