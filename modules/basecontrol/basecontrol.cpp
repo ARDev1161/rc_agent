@@ -138,6 +138,15 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
     max_angular_speed_ = this->declare_parameter<double>("basecontrol.max_angular_speed", 0.8);
     input_deadzone_ = this->declare_parameter<double>("basecontrol.input_deadzone", 3.0);
 
+    // Reject invalid speed limits before constructing ROS publishers. NaN and
+    // infinity must never reach the legacy velocity scaling boundary.
+    if (!std::isfinite(input_min_) || !std::isfinite(input_max_) ||
+        !std::isfinite(max_linear_speed_) || !std::isfinite(max_angular_speed_) ||
+        !std::isfinite(input_deadzone_) || max_linear_speed_ < 0.0 ||
+        max_angular_speed_ < 0.0 || input_deadzone_ < 0.0) {
+        throw std::invalid_argument("Invalid basecontrol velocity scaling parameters");
+    }
+
     std::transform(cmd_vel_msg_type_.begin(), cmd_vel_msg_type_.end(), cmd_vel_msg_type_.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
