@@ -1076,3 +1076,108 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepInitialPoseEndpointsIsolated)
     EXPECT_FALSE(wrong_b);
     EXPECT_TRUE(rclcpp::ok());
 }
+
+
+// P2: independently configured Nav2 action endpoints must not dispatch a
+// goal to the other robot profile. This tests ROS action routing, not P3
+// gRPC session isolation or any real robot motion.
+TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
+{
+    using Action = nav2_msgs::action::NavigateToPose;
+    using Handle = rclcpp_action::ServerGoalHandle<Action>;
+    auto request_a = std::make_shared<Navigation::NavCommandRequest>();
+    auto response_a = std::make_shared<Navigation::NavCommandResponse>();
+    auto request_b = std::make_shared<Navigation::NavCommandRequest>();
+    auto response_b = std::make_shared<Navigation::NavCommandResponse>();
+    std::mutex mutex_a;
+    std::mutex mutex_b;
+    rclcpp::NodeOptions options_a;
+    options_a.parameter_overrides({
+        rclcpp::Parameter("nav2.navigate_to_pose_action",
+                          "/profile_a/navigate_to_pose")
+    });
+    rclcpp::NodeOptions options_b;
+    options_b.parameter_overrides({
+        rclcpp::Parameter("nav2.navigate_to_pose_action",
+                          "/profile_b/navigate_to_pose")
+    });
+    auto navigator_a = std::make_shared<RobotNavigator>(
+        "profile_a_action_client", request_a, response_a, mutex_a, options_a);
+    auto navigator_b = std::make_shared<RobotNavigator>(
+        "profile_b_action_client", request_b, response_b, mutex_b, options_b);
+    auto server_node = std::make_shared<rclcpp::Node>("two_profile_action_server");
+    int goals_a = 0;
+    int goals_b = 0;
+    bool wrong_a = false;
+    bool wrong_b = false;
+    auto server_a = rclcpp_action::create_server<Action>(
+        server_node, "/profile_a/navigate_to_pose",
+        [&](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal> goal) {
+            ++goals_a;
+            if (goal->pose.pose.position.x != 11.0) wrong_a = true;
+            return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+        },
+        [](const std::shared_ptr<Handle>) {
+            return rclcpp_action::CancelResponse::ACCEPT;
+        },
+        [](const std::shared_ptr<Handle> handle) {
+            handle->succeed(std::make_shared<Action::Result>());
+        });
+    auto server_b = rclcpp_action::create_server<Action>(
+        server_node, "/profile_b/navigate_to_pose",
+        [&](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal> goal) {
+            ++goals_b;
+            if (goal->pose.pose.position.x != 22.0) wrong_b = true;
+            return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
+        },
+        [](const std::shared_ptr<Handle>) {
+            return rclcpp_action::CancelResponse::ACCEPT;
+        },
+        [](const std::shared_ptr<Handle> handle) {
+            handle->succeed(std::make_shared<Action::Result>());
+        });
+    auto observer_a = rclcpp_action::create_client<Action>(
+        server_node, "/profile_a/navigate_to_pose");
+    auto observer_b = rclcpp_action::create_client<Action>(
+        server_node, "/profile_b/navigate_to_pose");
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(navigator_a);
+    executor.add_node(navigator_b);
+    executor.add_node(server_node);
+    auto spin_until = [&](const std::function<bool()> &predicate) {
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (!predicate() && std::chrono::steady_clock::now() < deadline) {
+            executor.spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return predicate();
+    };
+    ASSERT_TRUE(spin_until([&] {
+        return observer_a->action_server_is_ready() &&
+               observer_b->action_server_is_ready();
+    }));
+    geometry_msgs::msg::PoseStamped pose_a;
+    pose_a.header.frame_id = "map";
+    pose_a.pose.position.x = 11.0;
+    navigator_a->goToPose(pose_a);
+    ASSERT_TRUE(spin_until([&] { return navigator_a->isTaskComplete(); }));
+    EXPECT_TRUE(navigator_a->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_EQ(goals_a, 1);
+    EXPECT_EQ(goals_b, 0);
+    EXPECT_FALSE(wrong_a);
+    EXPECT_FALSE(navigator_b->isTaskComplete() &&
+                 navigator_b->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+
+    geometry_msgs::msg::PoseStamped pose_b;
+    pose_b.header.frame_id = "map";
+    pose_b.pose.position.x = 22.0;
+    navigator_b->goToPose(pose_b);
+    ASSERT_TRUE(spin_until([&] { return navigator_b->isTaskComplete(); }));
+    EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_EQ(goals_a, 1);
+    EXPECT_EQ(goals_b, 1);
+    EXPECT_FALSE(wrong_a);
+    EXPECT_FALSE(wrong_b);
+    EXPECT_TRUE(navigator_a->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_TRUE(rclcpp::ok());
+}
