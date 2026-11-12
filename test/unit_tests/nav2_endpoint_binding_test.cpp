@@ -1184,5 +1184,25 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
     EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
     EXPECT_EQ(goals_a, 1);
     EXPECT_EQ(goals_b, 1);
+
+    // A second concurrent pair must also isolate a failed B result from A.
+    // Reset the server-side handles so this wait cannot pass on old goals.
+    pending_a.reset();
+    pending_b.reset();
+    navigator_a->goToPose(pose_a);
+    navigator_b->goToPose(pose_b);
+    ASSERT_TRUE(spin_until([&] { return pending_a && pending_b; }));
+    EXPECT_EQ(goals_a, 2);
+    EXPECT_EQ(goals_b, 2);
+    EXPECT_FALSE(wrong_a);
+    EXPECT_FALSE(wrong_b);
+    pending_b->abort(std::make_shared<Action::Result>());
+    ASSERT_TRUE(spin_until([&] { return navigator_b->isTaskComplete(); }));
+    EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::ABORTED);
+    EXPECT_FALSE(navigator_a->isTaskComplete());
+    pending_a->succeed(std::make_shared<Action::Result>());
+    ASSERT_TRUE(spin_until([&] { return navigator_a->isTaskComplete(); }));
+    EXPECT_TRUE(navigator_a->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::ABORTED);
     EXPECT_TRUE(rclcpp::ok());
 }
