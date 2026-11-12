@@ -98,3 +98,10 @@ The gateway binds the legacy `cmd_vel`, `cmd_vel_smoothed` and `cmd_vel_unsafety
 The trusted `Amur.API.endpoints` libconfig mapping now resolves all four existing Nav2 action names (`navigate_to_pose`, `navigate_through_poses`, `follow_waypoints`, `spin`) and the `initial_pose_topic` together in the production gateway startup path. New C++ GTests load two distinct on-disk robot profiles, assert all names, retain legacy defaults when omitted, and reject wrong-type/empty values. Existing ROS2 Humble mock Nav2 action tests separately exercise goal/result and isolated cancellation routing.
 
 [rc_agent functional test commit `3cde859b`](https://github.com/ARDev1161/rc_agent/commit/3cde859bfd2a35f9e47371e7ebcab64ae1d9cde0) · [source CI #43329770953](https://github.com/ARDev1161/rc_agent/actions/runs/43329770953) (check actual result; not presumed green). This **does not** establish real TurtleBot3/physical Nav2 acceptance, P3 multi-robot gRPC sessions, or enabled v2 velocity control.
+
+
+## P2 map, zones and TF2 libconfig profile — 2026-11-13
+
+Robot-local `map_topic`, `zones_topic`, `tf_map_frame` and `tf_robot_frame` now resolve together through the same trusted libconfig path as velocity and Nav2 actions, preserving existing legacy fallback names. Dedicated C++ GTests load independent alpha/beta robot profiles, verify defaults and reject invalid or empty local settings. Existing ROS2 Humble DDS map snapshot isolation tests remain part of the agent suite.
+
+[rc_agent commit `3f8e4d42`](https://github.com/ARDev1161/rc_agent/commit/3f8e4d427ea13d58b644db50831dfd4acdc2684f) · [CI #43330286479](https://github.com/ARDev1161/rc_agent/actions/runs/43330286479) (result must be checked). The source tests do **not** substitute for real TurtleBot3/Nav2 map and TF acceptance.
