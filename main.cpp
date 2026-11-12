@@ -902,18 +902,16 @@ int main(int argc, char **argv)
   auto baseControlNode = std::make_shared<BaseControlNode>(
     controlsPtr->mutable_basecontrol(),
     *network->getClientInstance()->getMutex(), base_options);
+  // Read the same trusted Nav2 profile used by the libconfig GTests.
+  // These are gateway-local bindings, not remote-selected action names.
+  const auto nav_profile = loadNav2EndpointProfile(endpoint_config);
   rclcpp::NodeOptions nav_options;
   nav_options.parameter_overrides({
-    rclcpp::Parameter("nav2.navigate_to_pose_action",
-      endpointOrDefault(endpoint_config, "Amur.API.endpoints.navigate_to_pose_action", "navigate_to_pose")),
-    rclcpp::Parameter("nav2.navigate_through_poses_action",
-      endpointOrDefault(endpoint_config, "Amur.API.endpoints.navigate_through_poses_action", "navigate_through_poses")),
-    rclcpp::Parameter("nav2.follow_waypoints_action",
-      endpointOrDefault(endpoint_config, "Amur.API.endpoints.follow_waypoints_action", "follow_waypoints")),
-    rclcpp::Parameter("nav2.spin_action",
-      endpointOrDefault(endpoint_config, "Amur.API.endpoints.spin_action", "spin")),
-    rclcpp::Parameter("nav2.initial_pose_topic",
-      endpointOrDefault(endpoint_config, "Amur.API.endpoints.initial_pose_topic", "initialpose"))
+    rclcpp::Parameter("nav2.navigate_to_pose_action", nav_profile.navigate_to_pose_action),
+    rclcpp::Parameter("nav2.navigate_through_poses_action", nav_profile.navigate_through_poses_action),
+    rclcpp::Parameter("nav2.follow_waypoints_action", nav_profile.follow_waypoints_action),
+    rclcpp::Parameter("nav2.spin_action", nav_profile.spin_action),
+    rclcpp::Parameter("nav2.initial_pose_topic", nav_profile.initial_pose_topic)
   });
   auto navigatorNode = std::make_shared<RobotNavigator>(
     "basic_navigator_node",
