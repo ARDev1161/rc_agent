@@ -15,6 +15,7 @@
 #include <stdexcept>
 
 #include "config/configprocessor.h"
+#include "config/endpoint_bindings.h"
 #include "network/networkcontroller.h"
 #include "modules/battery/battery_state_node.h"
 #include "modules/video/stream_pipeline_receiver.h"
@@ -62,23 +63,6 @@ std::string resolveVideoPipeline()
   }
 
   return loadVideoPipelineFromConfig("robot.cfg");
-}
-
-// Only locally configured, allowlisted ROS2 bindings are passed to adapters.
-// Missing settings preserve the legacy names; present but invalid settings fail closed.
-std::string endpointOrDefault(ConfigProcessor &config, const std::string &key,
-                              const std::string &fallback)
-{
-  const auto type = config.getType(key);
-  if (type == libconfig::Setting::TypeNone) {
-    return fallback;
-  }
-  std::string value;
-  if (type != libconfig::Setting::TypeString ||
-      config.searchString(key, value) != EXIT_SUCCESS || value.empty()) {
-    throw std::invalid_argument("Invalid robot endpoint setting: " + key);
-  }
-  return value;
 }
 
 // Advertise only semantic capabilities. ROS2/gRPC endpoints remain trusted local config.
@@ -894,16 +878,17 @@ int main(int argc, char **argv)
   const auto map_topic = endpointOrDefault(endpoint_config, "Amur.API.endpoints.map_topic", "/map");
   const auto zones_topic = endpointOrDefault(endpoint_config, "Amur.API.endpoints.zones_topic",
                                              "/mapannotator/rc_agent_zones");
+  // Resolve all basecontrol endpoints from the same trusted libconfig
+  // profile, including the two legacy auxiliary outputs.
+  const auto base_profile = loadBaseControlEndpointProfile(endpoint_config);
   rclcpp::NodeOptions base_options;
   base_options.parameter_overrides({
-    rclcpp::Parameter("basecontrol.odom_topic",
-      endpointOrDefault(endpoint_config, "Amur.API.endpoints.odom_topic", "/odom")),
-    rclcpp::Parameter("basecontrol.cmd_vel_topic",
-      endpointOrDefault(endpoint_config, "Amur.API.endpoints.cmd_vel_topic", "/cmd_vel")),
-    rclcpp::Parameter("basecontrol.cmd_vel_msg_type",
-      endpointOrDefault(endpoint_config, "Amur.API.endpoints.cmd_vel_type", "twist")),
-    rclcpp::Parameter("basecontrol.cmd_vel_frame_id",
-      endpointOrDefault(endpoint_config, "Amur.API.endpoints.cmd_vel_frame", "base_link"))
+    rclcpp::Parameter("basecontrol.odom_topic", base_profile.odom_topic),
+    rclcpp::Parameter("basecontrol.cmd_vel_topic", base_profile.cmd_vel_topic),
+    rclcpp::Parameter("basecontrol.cmd_vel_msg_type", base_profile.cmd_vel_type),
+    rclcpp::Parameter("basecontrol.cmd_vel_frame_id", base_profile.cmd_vel_frame),
+    rclcpp::Parameter("basecontrol.cmd_vel_smoothed_topic", base_profile.cmd_vel_smoothed_topic),
+    rclcpp::Parameter("basecontrol.cmd_vel_nav_topic", base_profile.cmd_vel_nav_topic)
   });
   rclcpp::NodeOptions map_options;
   map_options.parameter_overrides({
