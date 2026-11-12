@@ -619,6 +619,20 @@ TEST_F(EndpointBindingTest, NonfiniteProtobufVelocityDoesNotBlockRecovery)
     }
     EXPECT_TRUE(received.empty());
 
+    // An invalid angular component must also leave the last valid delta state
+    // untouched. This is a separate protobuf input path from linear NaN.
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        controls.set_linearvelocity(0.0);
+        controls.set_angularvelocity(std::numeric_limits<double>::infinity());
+    }
+    const auto angular_settle = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+    while (std::chrono::steady_clock::now() < angular_settle) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(received.empty());
+
     {
         std::lock_guard<std::mutex> lock(mutex);
         controls.set_linearvelocity(128.0);
