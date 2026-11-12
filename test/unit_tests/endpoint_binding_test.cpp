@@ -291,3 +291,56 @@ TEST_F(EndpointBindingTest, MixedVelocityMessageTypesRemainIsolated)
     EXPECT_DOUBLE_EQ(received_b.front().twist.angular.z, 0.31);
     EXPECT_EQ(received_a.size(), 1u);
 }
+
+
+// P2: a remote selector must not turn an allowlisted velocity publisher into
+// an arbitrary ROS topic publisher. Invalid selectors fail closed while the
+// existing configured cmd_vel route remains operational.
+TEST_F(EndpointBindingTest, UnknownVelocitySelectorCannotPublish)
+{
+    using Twist = geometry_msgs::msg::Twist;
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/selector_test/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/selector_test/cmd_vel")
+    });
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("velocity_selector_observer");
+    std::vector<double> received;
+    auto sub = observer->create_subscription<Twist>(
+        "/selector_test/cmd_vel", 10,
+        [&](const Twist::SharedPtr msg) { received.push_back(msg->linear.x); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+
+    const auto discovery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/selector_test/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_GT(node->count_subscribers("/selector_test/cmd_vel"), 0u);
+
+    Twist command;
+    command.linear.x = 0.42;
+    node->publishToBaseControlNode(command, "/selector_test/cmd_vel");
+    node->publishToBaseControlNode(command, "arbitrary_remote_topic");
+    const auto reject_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+    while (std::chrono::steady_clock::now() < reject_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(received.empty());
+
+    node->publishToBaseControlNode(command, "cmd_vel");
+    const auto delivery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.empty() && std::chrono::steady_clock::now() < delivery_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_DOUBLE_EQ(received.front(), 0.42);
+}
