@@ -211,3 +211,83 @@ TEST_F(EndpointBindingTest, TwoProfilesKeepVelocityPublishersIsolated)
     EXPECT_DOUBLE_EQ(received_b.front(), -0.22);
     EXPECT_EQ(received_a.size(), 1u);
 }
+
+
+// P2: mixed Twist/TwistStamped robot profiles must retain their own ROS
+// message types, frame metadata and payloads. This is legacy topic binding,
+// not authorization for v2 velocity commands.
+TEST_F(EndpointBindingTest, MixedVelocityMessageTypesRemainIsolated)
+{
+    using Twist = geometry_msgs::msg::Twist;
+    using Stamped = geometry_msgs::msg::TwistStamped;
+    Base::BaseControl control_a;
+    Base::BaseControl control_b;
+    std::mutex mutex_a;
+    std::mutex mutex_b;
+    rclcpp::NodeOptions options_a;
+    options_a.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/mixed_a/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/mixed_a/cmd_vel"),
+        rclcpp::Parameter("basecontrol.cmd_vel_msg_type", "twist")
+    });
+    rclcpp::NodeOptions options_b;
+    options_b.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/mixed_b/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/mixed_b/cmd_vel"),
+        rclcpp::Parameter("basecontrol.cmd_vel_msg_type", "twist_stamped"),
+        rclcpp::Parameter("basecontrol.cmd_vel_frame_id", "robot_b/base_link")
+    });
+    auto node_a = std::make_shared<BaseControlNode>(&control_a, mutex_a, options_a);
+    auto node_b = std::make_shared<BaseControlNode>(&control_b, mutex_b, options_b);
+    auto observer = std::make_shared<rclcpp::Node>("mixed_velocity_type_observer");
+    std::vector<Twist> received_a;
+    std::vector<Stamped> received_b;
+    auto sub_a = observer->create_subscription<Twist>(
+        "/mixed_a/cmd_vel", 10,
+        [&](const Twist::SharedPtr msg) { received_a.push_back(*msg); });
+    auto sub_b = observer->create_subscription<Stamped>(
+        "/mixed_b/cmd_vel", 10,
+        [&](const Stamped::SharedPtr msg) { received_b.push_back(*msg); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node_a);
+    executor.add_node(node_b);
+    executor.add_node(observer);
+
+    const auto discovery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while ((node_a->count_subscribers("/mixed_a/cmd_vel") == 0 ||
+            node_b->count_subscribers("/mixed_b/cmd_vel") == 0) &&
+           std::chrono::steady_clock::now() < discovery_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_GT(node_a->count_subscribers("/mixed_a/cmd_vel"), 0u);
+    ASSERT_GT(node_b->count_subscribers("/mixed_b/cmd_vel"), 0u);
+
+    Twist a;
+    a.linear.x = 0.17;
+    node_a->publishToBaseControlNode(a, "cmd_vel");
+    const auto first_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received_a.empty() && std::chrono::steady_clock::now() < first_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(received_a.size(), 1u);
+    EXPECT_DOUBLE_EQ(received_a.front().linear.x, 0.17);
+    EXPECT_TRUE(received_b.empty());
+
+    Twist b;
+    b.linear.x = -0.29;
+    b.angular.z = 0.31;
+    node_b->publishToBaseControlNode(b, "cmd_vel");
+    const auto second_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received_b.empty() && std::chrono::steady_clock::now() < second_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(received_b.size(), 1u);
+    EXPECT_EQ(received_b.front().header.frame_id, "robot_b/base_link");
+    EXPECT_GT(received_b.front().header.stamp.sec, 0);
+    EXPECT_DOUBLE_EQ(received_b.front().twist.linear.x, -0.29);
+    EXPECT_DOUBLE_EQ(received_b.front().twist.angular.z, 0.31);
+    EXPECT_EQ(received_a.size(), 1u);
+}
