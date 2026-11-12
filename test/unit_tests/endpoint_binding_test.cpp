@@ -576,3 +576,59 @@ TEST_F(EndpointBindingTest, NonfiniteVelocityCommandsAreNotPublished)
     EXPECT_TRUE(smooth_received.empty());
     EXPECT_TRUE(nav_received.empty());
 }
+
+
+// P2: malformed values arriving through the legacy protobuf controls must
+// not poison change tracking; a subsequent finite command must still publish.
+TEST_F(EndpointBindingTest, NonfiniteProtobufVelocityDoesNotBlockRecovery)
+{
+    using Twist = geometry_msgs::msg::Twist;
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/proto_guard/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/proto_guard/cmd_vel")
+    });
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("proto_velocity_guard_observer");
+    std::vector<double> received;
+    auto subscription = observer->create_subscription<Twist>(
+        "/proto_guard/cmd_vel", 10,
+        [&](const Twist::SharedPtr msg) { received.push_back(msg->linear.x); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/proto_guard/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_GT(node->count_subscribers("/proto_guard/cmd_vel"), 0u);
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        controls.set_linearvelocity(std::numeric_limits<double>::quiet_NaN());
+        controls.set_angularvelocity(0.0);
+    }
+    const auto settle = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+    while (std::chrono::steady_clock::now() < settle) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(received.empty());
+
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        controls.set_linearvelocity(128.0);
+        controls.set_angularvelocity(0.0);
+    }
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.empty() && std::chrono::steady_clock::now() < deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_GT(received.front(), 0.0);
+}
