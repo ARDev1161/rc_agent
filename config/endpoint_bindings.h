@@ -71,4 +71,24 @@ inline Nav2EndpointProfile loadNav2EndpointProfile(ConfigProcessor &config)
     };
 }
 
+
+// Map and TF2 bindings come from the same locally trusted config as the
+// velocity/Nav2 endpoints. No remote command can select arbitrary frames.
+struct MapEndpointProfile {
+    std::string map_topic;
+    std::string zones_topic;
+    std::string tf_map_frame;
+    std::string tf_robot_frame;
+};
+
+inline MapEndpointProfile loadMapEndpointProfile(ConfigProcessor &config)
+{
+    return {
+        endpointOrDefault(config, "Amur.API.endpoints.map_topic", "/map"),
+        endpointOrDefault(config, "Amur.API.endpoints.zones_topic", "/mapannotator/rc_agent_zones"),
+        endpointOrDefault(config, "Amur.API.endpoints.tf_map_frame", "map"),
+        endpointOrDefault(config, "Amur.API.endpoints.tf_robot_frame", "base_link")
+    };
+}
+
 #endif // RC_AGENT_ENDPOINT_BINDINGS_H
