@@ -51,6 +51,8 @@ Amur:
         // {
         //     odom_topic = "/odom";
         //     cmd_vel_topic = "/cmd_vel";
+        //     cmd_vel_smoothed_topic = "/cmd_vel_smoothed";
+        //     cmd_vel_nav_topic = "/cmd_vel_nav";
         //     cmd_vel_type = "twist"; // or "twist_stamped"
         //     cmd_vel_frame = "base_link";
         //     map_topic = "/map";
