@@ -1110,6 +1110,8 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
     int goals_b = 0;
     bool wrong_a = false;
     bool wrong_b = false;
+    int cancel_requests_a = 0;
+    int cancel_requests_b = 0;
     std::shared_ptr<Handle> pending_a;
     std::shared_ptr<Handle> pending_b;
     auto server_a = rclcpp_action::create_server<Action>(
@@ -1119,7 +1121,8 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
             if (goal->pose.pose.position.x != 11.0) wrong_a = true;
             return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
         },
-        [](const std::shared_ptr<Handle>) {
+        [&](const std::shared_ptr<Handle>) {
+            ++cancel_requests_a;
             return rclcpp_action::CancelResponse::ACCEPT;
         },
         [&](const std::shared_ptr<Handle> handle) { pending_a = handle; });
@@ -1130,7 +1133,8 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
             if (goal->pose.pose.position.x != 22.0) wrong_b = true;
             return rclcpp_action::GoalResponse::ACCEPT_AND_EXECUTE;
         },
-        [](const std::shared_ptr<Handle>) {
+        [&](const std::shared_ptr<Handle>) {
+            ++cancel_requests_b;
             return rclcpp_action::CancelResponse::ACCEPT;
         },
         [&](const std::shared_ptr<Handle> handle) { pending_b = handle; });
@@ -1254,6 +1258,12 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
     ASSERT_TRUE(spin_until([&] { return navigator_b->isTaskComplete(); }));
     EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
     EXPECT_TRUE(navigator_a->getResult() == rclcpp_action::ResultCode::CANCELED);
+    // Backend cancellation must be routed exactly once to each matching
+    // endpoint, never broadcast to the other robot's action server.
+    EXPECT_EQ(cancel_requests_a, 1);
+    EXPECT_EQ(cancel_requests_b, 1);
+    EXPECT_EQ(goals_a, 4);
+    EXPECT_EQ(goals_b, 4);
     EXPECT_FALSE(wrong_a);
     EXPECT_FALSE(wrong_b);
     EXPECT_TRUE(rclcpp::ok());
