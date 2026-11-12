@@ -123,8 +123,8 @@ TEST_F(EndpointBindingTest, TwoProfilesKeepOdometryStatusIsolated)
         executor.spin_some();
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
-    ASSERT_EQ(node_a->getBaseControlStatus(), BaseControlNode::ControlStatus::RUNNING);
-    EXPECT_EQ(node_b->getBaseControlStatus(), BaseControlNode::ControlStatus::READY_OK);
+    ASSERT_TRUE(node_a->getBaseControlStatus() == BaseControlNode::ControlStatus::RUNNING);
+    EXPECT_TRUE(node_b->getBaseControlStatus() == BaseControlNode::ControlStatus::READY_OK);
 
     // Only B moves now; A receives no new odometry and must retain its state.
     const auto second_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -134,6 +134,6 @@ TEST_F(EndpointBindingTest, TwoProfilesKeepOdometryStatusIsolated)
         executor.spin_some();
         std::this_thread::sleep_for(std::chrono::milliseconds(25));
     }
-    ASSERT_EQ(node_b->getBaseControlStatus(), BaseControlNode::ControlStatus::RUNNING);
-    EXPECT_EQ(node_a->getBaseControlStatus(), BaseControlNode::ControlStatus::RUNNING);
+    ASSERT_TRUE(node_b->getBaseControlStatus() == BaseControlNode::ControlStatus::RUNNING);
+    EXPECT_TRUE(node_a->getBaseControlStatus() == BaseControlNode::ControlStatus::RUNNING);
 }
