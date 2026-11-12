@@ -5,6 +5,8 @@
 #include <thread>
 #include <memory>
 #include <stdexcept>
+#include <limits>
+#include <utility>
 #include <vector>
 #include "modules/basecontrol/basecontrol.h"
 
@@ -376,6 +378,29 @@ TEST_F(EndpointBindingTest, EmptyAuxiliaryVelocityTopicsFailClosed)
         std::mutex mutex;
         rclcpp::NodeOptions options;
         options.parameter_overrides({rclcpp::Parameter(name, "")});
+        EXPECT_THROW(BaseControlNode(&controls, mutex, options), std::invalid_argument);
+    }
+}
+
+// P2: invalid local velocity scaling parameters must fail before any ROS
+// publisher is created, rather than producing NaN or unbounded commands.
+TEST_F(EndpointBindingTest, InvalidVelocityScalingParametersFailClosed)
+{
+    const std::vector<std::pair<std::string, double>> invalid = {
+        {"basecontrol.input_min", std::numeric_limits<double>::quiet_NaN()},
+        {"basecontrol.input_max", std::numeric_limits<double>::infinity()},
+        {"basecontrol.max_linear_speed", -0.1},
+        {"basecontrol.max_angular_speed", -0.1},
+        {"basecontrol.input_deadzone", -1.0},
+        {"basecontrol.max_linear_speed", std::numeric_limits<double>::quiet_NaN()},
+        {"basecontrol.max_angular_speed", std::numeric_limits<double>::infinity()}
+    };
+    for (const auto &entry : invalid) {
+        SCOPED_TRACE(entry.first);
+        Base::BaseControl controls;
+        std::mutex mutex;
+        rclcpp::NodeOptions options;
+        options.parameter_overrides({rclcpp::Parameter(entry.first, entry.second)});
         EXPECT_THROW(BaseControlNode(&controls, mutex, options), std::invalid_argument);
     }
 }
