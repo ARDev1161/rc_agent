@@ -485,3 +485,73 @@ TEST_F(EndpointBindingTest, AuxiliaryVelocityDeliveryRemainsProfileLocal)
     EXPECT_TRUE(a_nav.empty());
     EXPECT_TRUE(b_smoothed.empty());
 }
+
+
+// P2: malformed legacy velocity values must never reach any ROS output,
+// including the auxiliary selectors. A subsequent finite command still works.
+TEST_F(EndpointBindingTest, NonfiniteVelocityCommandsAreNotPublished)
+{
+    using Twist = geometry_msgs::msg::Twist;
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/finite_guard/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/finite_guard/cmd_vel"),
+        rclcpp::Parameter("basecontrol.cmd_vel_smoothed_topic", "/finite_guard/smoothed"),
+        rclcpp::Parameter("basecontrol.cmd_vel_nav_topic", "/finite_guard/nav")
+    });
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("finite_velocity_guard_observer");
+    std::vector<double> main_received, smooth_received, nav_received;
+    auto main_sub = observer->create_subscription<Twist>("/finite_guard/cmd_vel", 10,
+        [&](const Twist::SharedPtr msg) { main_received.push_back(msg->linear.x); });
+    auto smooth_sub = observer->create_subscription<Twist>("/finite_guard/smoothed", 10,
+        [&](const Twist::SharedPtr msg) { smooth_received.push_back(msg->linear.x); });
+    auto nav_sub = observer->create_subscription<Twist>("/finite_guard/nav", 10,
+        [&](const Twist::SharedPtr msg) { nav_received.push_back(msg->linear.x); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while ((node->count_subscribers("/finite_guard/cmd_vel") == 0 ||
+            node->count_subscribers("/finite_guard/smoothed") == 0 ||
+            node->count_subscribers("/finite_guard/nav") == 0) &&
+           std::chrono::steady_clock::now() < discovery) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_GT(node->count_subscribers("/finite_guard/cmd_vel"), 0u);
+    ASSERT_GT(node->count_subscribers("/finite_guard/smoothed"), 0u);
+    ASSERT_GT(node->count_subscribers("/finite_guard/nav"), 0u);
+
+    Twist malformed;
+    malformed.linear.x = std::numeric_limits<double>::quiet_NaN();
+    for (const auto &selector : {"cmd_vel", "cmd_vel_smoothed", "cmd_vel_unsafety"}) {
+        node->publishToBaseControlNode(malformed, selector);
+    }
+    malformed.linear.x = 0.1;
+    malformed.angular.z = std::numeric_limits<double>::infinity();
+    node->publishToBaseControlNode(malformed, "cmd_vel");
+    const auto settle = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+    while (std::chrono::steady_clock::now() < settle) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(main_received.empty());
+    EXPECT_TRUE(smooth_received.empty());
+    EXPECT_TRUE(nav_received.empty());
+
+    Twist valid;
+    valid.linear.x = 0.21;
+    node->publishToBaseControlNode(valid, "cmd_vel");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (main_received.empty() && std::chrono::steady_clock::now() < deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(main_received.size(), 1u);
+    EXPECT_DOUBLE_EQ(main_received.front(), 0.21);
+    EXPECT_TRUE(smooth_received.empty());
+    EXPECT_TRUE(nav_received.empty());
+}
