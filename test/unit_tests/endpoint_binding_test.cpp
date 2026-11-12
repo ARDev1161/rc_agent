@@ -404,3 +404,84 @@ TEST_F(EndpointBindingTest, InvalidVelocityScalingParametersFailClosed)
         EXPECT_THROW(BaseControlNode(&controls, mutex, options), std::invalid_argument);
     }
 }
+
+
+// P2: configured auxiliary outputs are independently routed on the ROS graph,
+// not merely registered with the expected topic names. This does not enable
+// v2 teleop or bypass the existing local selector allowlist.
+TEST_F(EndpointBindingTest, AuxiliaryVelocityDeliveryRemainsProfileLocal)
+{
+    using Twist = geometry_msgs::msg::Twist;
+    Base::BaseControl controls_a, controls_b;
+    std::mutex mutex_a, mutex_b;
+    rclcpp::NodeOptions options_a, options_b;
+    options_a.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/aux_a/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/aux_a/cmd_vel"),
+        rclcpp::Parameter("basecontrol.cmd_vel_smoothed_topic", "/aux_a/smoothed"),
+        rclcpp::Parameter("basecontrol.cmd_vel_nav_topic", "/aux_a/nav")
+    });
+    options_b.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/aux_b/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/aux_b/cmd_vel"),
+        rclcpp::Parameter("basecontrol.cmd_vel_smoothed_topic", "/aux_b/smoothed"),
+        rclcpp::Parameter("basecontrol.cmd_vel_nav_topic", "/aux_b/nav")
+    });
+    auto a = std::make_shared<BaseControlNode>(&controls_a, mutex_a, options_a);
+    auto b = std::make_shared<BaseControlNode>(&controls_b, mutex_b, options_b);
+    auto observer = std::make_shared<rclcpp::Node>("auxiliary_velocity_observer");
+    std::vector<double> a_smoothed, a_nav, b_smoothed, b_nav;
+    auto as = observer->create_subscription<Twist>("/aux_a/smoothed", 10,
+        [&](const Twist::SharedPtr m) { a_smoothed.push_back(m->linear.x); });
+    auto an = observer->create_subscription<Twist>("/aux_a/nav", 10,
+        [&](const Twist::SharedPtr m) { a_nav.push_back(m->linear.x); });
+    auto bs = observer->create_subscription<Twist>("/aux_b/smoothed", 10,
+        [&](const Twist::SharedPtr m) { b_smoothed.push_back(m->linear.x); });
+    auto bn = observer->create_subscription<Twist>("/aux_b/nav", 10,
+        [&](const Twist::SharedPtr m) { b_nav.push_back(m->linear.x); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(a);
+    executor.add_node(b);
+    executor.add_node(observer);
+    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while ((a->count_subscribers("/aux_a/smoothed") == 0 ||
+            a->count_subscribers("/aux_a/nav") == 0 ||
+            b->count_subscribers("/aux_b/smoothed") == 0 ||
+            b->count_subscribers("/aux_b/nav") == 0) &&
+           std::chrono::steady_clock::now() < discovery) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_GT(a->count_subscribers("/aux_a/smoothed"), 0u);
+    ASSERT_GT(a->count_subscribers("/aux_a/nav"), 0u);
+    ASSERT_GT(b->count_subscribers("/aux_b/smoothed"), 0u);
+    ASSERT_GT(b->count_subscribers("/aux_b/nav"), 0u);
+
+    Twist first;
+    first.linear.x = 0.13;
+    a->publishToBaseControlNode(first, "cmd_vel_smoothed");
+    const auto first_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (a_smoothed.empty() && std::chrono::steady_clock::now() < first_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(a_smoothed.size(), 1u);
+    EXPECT_DOUBLE_EQ(a_smoothed.front(), 0.13);
+    EXPECT_TRUE(a_nav.empty());
+    EXPECT_TRUE(b_smoothed.empty());
+    EXPECT_TRUE(b_nav.empty());
+
+    Twist second;
+    second.linear.x = -0.24;
+    b->publishToBaseControlNode(second, "cmd_vel_unsafety");
+    const auto second_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (b_nav.empty() && std::chrono::steady_clock::now() < second_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(b_nav.size(), 1u);
+    EXPECT_DOUBLE_EQ(b_nav.front(), -0.24);
+    EXPECT_EQ(a_smoothed.size(), 1u);
+    EXPECT_TRUE(a_nav.empty());
+    EXPECT_TRUE(b_smoothed.empty());
+}
