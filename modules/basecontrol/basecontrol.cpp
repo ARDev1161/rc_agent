@@ -193,6 +193,15 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
 BaseControlNode::~BaseControlNode() = default;
 
 void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& twist_msg, const std::string& topic) {
+    // Reject malformed legacy commands before publishing on any allowlisted ROS output.
+    // This does not grant v2 velocity authority or replace its TTL/lease/watchdog gates.
+    const auto &linear = twist_msg.linear;
+    const auto &angular = twist_msg.angular;
+    if (!std::isfinite(linear.x) || !std::isfinite(linear.y) || !std::isfinite(linear.z) ||
+        !std::isfinite(angular.x) || !std::isfinite(angular.y) || !std::isfinite(angular.z)) {
+        RCLCPP_ERROR(get_logger(), "Rejecting non-finite legacy velocity command");
+        return;
+    }
     if (topic.compare("cmd_vel") == 0) {
         if (cmd_vel_msg_type_ == "twist_stamped" && cmd_vel_stamped_pub_) {
             geometry_msgs::msg::TwistStamped stamped;
