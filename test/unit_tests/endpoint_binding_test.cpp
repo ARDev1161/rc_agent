@@ -5,6 +5,7 @@
 #include <thread>
 #include <memory>
 #include <stdexcept>
+#include <vector>
 #include "modules/basecontrol/basecontrol.h"
 
 class EndpointBindingTest : public ::testing::Test {
@@ -136,4 +137,77 @@ TEST_F(EndpointBindingTest, TwoProfilesKeepOdometryStatusIsolated)
     }
     ASSERT_TRUE(node_b->getBaseControlStatus() == BaseControlNode::ControlStatus::RUNNING);
     EXPECT_TRUE(node_a->getBaseControlStatus() == BaseControlNode::ControlStatus::RUNNING);
+}
+
+
+// P2: exercise actual ROS2 cmd_vel delivery on two independently configured
+// adapters. This is topic routing only, not P3 gRPC session isolation or a
+// v2 velocity-authority safety test.
+TEST_F(EndpointBindingTest, TwoProfilesKeepVelocityPublishersIsolated)
+{
+    using Twist = geometry_msgs::msg::Twist;
+    Base::BaseControl control_a;
+    Base::BaseControl control_b;
+    std::mutex mutex_a;
+    std::mutex mutex_b;
+    rclcpp::NodeOptions options_a;
+    rclcpp::NodeOptions options_b;
+    options_a.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/velocity_a/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/velocity_a/cmd_vel")
+    });
+    options_b.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/velocity_b/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/velocity_b/cmd_vel")
+    });
+    auto node_a = std::make_shared<BaseControlNode>(&control_a, mutex_a, options_a);
+    auto node_b = std::make_shared<BaseControlNode>(&control_b, mutex_b, options_b);
+    auto observer = std::make_shared<rclcpp::Node>("two_profile_velocity_observer");
+    std::vector<double> received_a;
+    std::vector<double> received_b;
+    auto sub_a = observer->create_subscription<Twist>(
+        "/velocity_a/cmd_vel", 10,
+        [&](const Twist::SharedPtr msg) { received_a.push_back(msg->linear.x); });
+    auto sub_b = observer->create_subscription<Twist>(
+        "/velocity_b/cmd_vel", 10,
+        [&](const Twist::SharedPtr msg) { received_b.push_back(msg->linear.x); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node_a);
+    executor.add_node(node_b);
+    executor.add_node(observer);
+
+    // Allow DDS discovery before asserting delivery.
+    const auto discovery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while ((node_a->count_subscribers("/velocity_a/cmd_vel") == 0 ||
+            node_b->count_subscribers("/velocity_b/cmd_vel") == 0) &&
+           std::chrono::steady_clock::now() < discovery_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_GT(node_a->count_subscribers("/velocity_a/cmd_vel"), 0u);
+    ASSERT_GT(node_b->count_subscribers("/velocity_b/cmd_vel"), 0u);
+
+    Twist command_a;
+    command_a.linear.x = 0.11;
+    node_a->publishToBaseControlNode(command_a, "cmd_vel");
+    const auto first_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received_a.empty() && std::chrono::steady_clock::now() < first_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(received_a.size(), 1u);
+    EXPECT_DOUBLE_EQ(received_a.front(), 0.11);
+    EXPECT_TRUE(received_b.empty());
+
+    Twist command_b;
+    command_b.linear.x = -0.22;
+    node_b->publishToBaseControlNode(command_b, "cmd_vel");
+    const auto second_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received_b.empty() && std::chrono::steady_clock::now() < second_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(received_b.size(), 1u);
+    EXPECT_DOUBLE_EQ(received_b.front(), -0.22);
+    EXPECT_EQ(received_a.size(), 1u);
 }
