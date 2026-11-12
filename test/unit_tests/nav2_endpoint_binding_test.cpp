@@ -1230,6 +1230,30 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
     ASSERT_TRUE(spin_until([&] { return navigator_a->isTaskComplete(); }));
     EXPECT_TRUE(navigator_a->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
     EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::CANCELED);
+
+    // Reverse the cancellation direction: cancel A while B remains active.
+    // This catches asymmetric endpoint routing or shared cancellation state.
+    pending_a.reset();
+    pending_b.reset();
+    navigator_a->goToPose(pose_a);
+    navigator_b->goToPose(pose_b);
+    ASSERT_TRUE(spin_until([&] { return pending_a && pending_b; }));
+    EXPECT_EQ(goals_a, 4);
+    EXPECT_EQ(goals_b, 4);
+    EXPECT_FALSE(navigator_a->isTaskComplete());
+    EXPECT_FALSE(navigator_b->isTaskComplete());
+    navigator_a->cancelTask();
+    ASSERT_TRUE(spin_until([&] { return pending_a->is_canceling(); }));
+    EXPECT_FALSE(navigator_b->isTaskComplete());
+    EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::UNKNOWN);
+    pending_a->canceled(std::make_shared<Action::Result>());
+    ASSERT_TRUE(spin_until([&] { return navigator_a->isTaskComplete(); }));
+    EXPECT_TRUE(navigator_a->getResult() == rclcpp_action::ResultCode::CANCELED);
+    EXPECT_FALSE(navigator_b->isTaskComplete());
+    pending_b->succeed(std::make_shared<Action::Result>());
+    ASSERT_TRUE(spin_until([&] { return navigator_b->isTaskComplete(); }));
+    EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_TRUE(navigator_a->getResult() == rclcpp_action::ResultCode::CANCELED);
     EXPECT_FALSE(wrong_a);
     EXPECT_FALSE(wrong_b);
     EXPECT_TRUE(rclcpp::ok());
