@@ -344,3 +344,38 @@ TEST_F(EndpointBindingTest, UnknownVelocitySelectorCannotPublish)
     ASSERT_EQ(received.size(), 1u);
     EXPECT_DOUBLE_EQ(received.front(), 0.42);
 }
+
+
+// P2: auxiliary legacy velocity publishers must also be robot-profile local.
+// Keep their existing selector names, but never route them to another robot's
+// hardcoded global ROS topics when an explicit local binding is configured.
+TEST_F(EndpointBindingTest, AuxiliaryVelocityTopicsFollowLocalProfile)
+{
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/aux_profile/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/aux_profile/cmd_vel"),
+        rclcpp::Parameter("basecontrol.cmd_vel_smoothed_topic", "/aux_profile/cmd_vel_smoothed"),
+        rclcpp::Parameter("basecontrol.cmd_vel_nav_topic", "/aux_profile/cmd_vel_nav")
+    });
+    BaseControlNode node(&controls, mutex, options);
+    EXPECT_EQ(node.get_publishers_info_by_topic("/aux_profile/cmd_vel_smoothed").size(), 1u);
+    EXPECT_EQ(node.get_publishers_info_by_topic("/aux_profile/cmd_vel_nav").size(), 1u);
+    EXPECT_EQ(node.get_publishers_info_by_topic("/cmd_vel_smoothed").size(), 0u);
+    EXPECT_EQ(node.get_publishers_info_by_topic("/cmd_vel_nav").size(), 0u);
+}
+
+TEST_F(EndpointBindingTest, EmptyAuxiliaryVelocityTopicsFailClosed)
+{
+    for (const auto &name : {"basecontrol.cmd_vel_smoothed_topic",
+                             "basecontrol.cmd_vel_nav_topic"}) {
+        SCOPED_TRACE(name);
+        Base::BaseControl controls;
+        std::mutex mutex;
+        rclcpp::NodeOptions options;
+        options.parameter_overrides({rclcpp::Parameter(name, "")});
+        EXPECT_THROW(BaseControlNode(&controls, mutex, options), std::invalid_argument);
+    }
+}
