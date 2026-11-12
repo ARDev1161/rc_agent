@@ -530,9 +530,30 @@ TEST_F(EndpointBindingTest, NonfiniteVelocityCommandsAreNotPublished)
     for (const auto &selector : {"cmd_vel", "cmd_vel_smoothed", "cmd_vel_unsafety"}) {
         node->publishToBaseControlNode(malformed, selector);
     }
-    malformed.linear.x = 0.1;
-    malformed.angular.z = std::numeric_limits<double>::infinity();
-    node->publishToBaseControlNode(malformed, "cmd_vel");
+    // Exercise every component and every allowed selector, not only linear.x.
+    // The guard must reject the whole command even when the other five values
+    // are finite, and must never publish a partially sanitized command.
+    const auto invalid = std::numeric_limits<double>::infinity();
+    for (int component = 0; component < 6; ++component) {
+        Twist bad;
+        bad.linear.x = 0.1;
+        bad.linear.y = 0.2;
+        bad.linear.z = 0.3;
+        bad.angular.x = 0.4;
+        bad.angular.y = 0.5;
+        bad.angular.z = 0.6;
+        switch (component) {
+        case 0: bad.linear.x = invalid; break;
+        case 1: bad.linear.y = invalid; break;
+        case 2: bad.linear.z = invalid; break;
+        case 3: bad.angular.x = invalid; break;
+        case 4: bad.angular.y = invalid; break;
+        case 5: bad.angular.z = invalid; break;
+        }
+        for (const auto &selector : {"cmd_vel", "cmd_vel_smoothed", "cmd_vel_unsafety"}) {
+            node->publishToBaseControlNode(bad, selector);
+        }
+    }
     const auto settle = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
     while (std::chrono::steady_clock::now() < settle) {
         executor.spin_some();
