@@ -1,4 +1,6 @@
 #include "../../config/configprocessor.h"
+#include "../../config/endpoint_bindings.h"
+#include <stdexcept>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -539,4 +541,75 @@ TEST(ConfigEndpointProfiles, IndependentBindingsAndMalformedType) {
   EXPECT_EQ("/beta/navigate_to_pose", value);
   fs::remove(path_a);
   fs::remove(path_b);
+}
+
+// P2: exercise the exact production libconfig->ROS2 endpoint profile loader.
+// Distinct robot files must not silently share global auxiliary velocity topics.
+TEST(ConfigEndpointProfiles, AuxiliaryVelocityBindingsAreIndependent) {
+  const auto path_a = fs::temp_directory_path() / "rc_agent_p2_aux_alpha.cfg";
+  const auto path_b = fs::temp_directory_path() / "rc_agent_p2_aux_beta.cfg";
+  {
+    std::ofstream out(path_a);
+    out << "Amur: { API: { endpoints: { "
+           "odom_topic = \"/alpha/odom\"; cmd_vel_topic = \"/alpha/cmd_vel\"; "
+           "cmd_vel_smoothed_topic = \"/alpha/filtered\"; "
+           "cmd_vel_nav_topic = \"/alpha/nav\"; }; }; };\n";
+  }
+  {
+    std::ofstream out(path_b);
+    out << "Amur: { API: { endpoints: { "
+           "odom_topic = \"/beta/odom\"; cmd_vel_topic = \"/beta/cmd_vel\"; "
+           "cmd_vel_smoothed_topic = \"/beta/filtered\"; "
+           "cmd_vel_nav_topic = \"/beta/nav\"; "
+           "cmd_vel_type = \"twist_stamped\"; }; }; };\n";
+  }
+  ConfigProcessor a(path_a.string());
+  ConfigProcessor b(path_b.string());
+  const auto alpha = loadBaseControlEndpointProfile(a);
+  const auto beta = loadBaseControlEndpointProfile(b);
+  EXPECT_EQ(alpha.odom_topic, "/alpha/odom");
+  EXPECT_EQ(beta.odom_topic, "/beta/odom");
+  EXPECT_EQ(alpha.cmd_vel_topic, "/alpha/cmd_vel");
+  EXPECT_EQ(beta.cmd_vel_topic, "/beta/cmd_vel");
+  EXPECT_EQ(alpha.cmd_vel_smoothed_topic, "/alpha/filtered");
+  EXPECT_EQ(beta.cmd_vel_smoothed_topic, "/beta/filtered");
+  EXPECT_EQ(alpha.cmd_vel_nav_topic, "/alpha/nav");
+  EXPECT_EQ(beta.cmd_vel_nav_topic, "/beta/nav");
+  EXPECT_EQ(alpha.cmd_vel_type, "twist");
+  EXPECT_EQ(beta.cmd_vel_type, "twist_stamped");
+  EXPECT_EQ(alpha.cmd_vel_frame, "base_link");
+  EXPECT_EQ(beta.cmd_vel_frame, "base_link");
+  fs::remove(path_a);
+  fs::remove(path_b);
+}
+
+TEST(ConfigEndpointProfiles, MissingAuxiliaryBindingsRetainLegacyDefaults) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_aux_defaults.cfg";
+  {
+    std::ofstream out(path);
+    out << "Amur: { API: { endpoints: { cmd_vel_topic = \"/custom/cmd_vel\"; }; }; };\n";
+  }
+  ConfigProcessor config(path.string());
+  const auto profile = loadBaseControlEndpointProfile(config);
+  EXPECT_EQ(profile.cmd_vel_topic, "/custom/cmd_vel");
+  EXPECT_EQ(profile.cmd_vel_smoothed_topic, "/cmd_vel_smoothed");
+  EXPECT_EQ(profile.cmd_vel_nav_topic, "/cmd_vel_nav");
+  fs::remove(path);
+}
+
+TEST(ConfigEndpointProfiles, InvalidAuxiliaryBindingsFailClosed) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_aux_invalid.cfg";
+  for (const auto &key : {"cmd_vel_smoothed_topic", "cmd_vel_nav_topic"}) {
+    for (const auto &bad_value : {"17", "\"\""}) {
+      {
+        std::ofstream out(path);
+        out << "Amur: { API: { endpoints: { " << key
+            << " = " << bad_value << "; }; }; };\n";
+      }
+      ConfigProcessor config(path.string());
+      EXPECT_THROW(loadBaseControlEndpointProfile(config), std::invalid_argument)
+          << "key=" << key << " value=" << bad_value;
+    }
+  }
+  fs::remove(path);
 }
