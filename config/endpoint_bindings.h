@@ -48,4 +48,27 @@ inline BaseControlEndpointProfile loadBaseControlEndpointProfile(ConfigProcessor
     };
 }
 
+
+// Trusted Nav2 bindings are loaded together so the running gateway and
+// the config tests use exactly the same names and legacy fallback values.
+// No action types are selected by the remote operator.
+struct Nav2EndpointProfile {
+    std::string navigate_to_pose_action;
+    std::string navigate_through_poses_action;
+    std::string follow_waypoints_action;
+    std::string spin_action;
+    std::string initial_pose_topic;
+};
+
+inline Nav2EndpointProfile loadNav2EndpointProfile(ConfigProcessor &config)
+{
+    return {
+        endpointOrDefault(config, "Amur.API.endpoints.navigate_to_pose_action", "navigate_to_pose"),
+        endpointOrDefault(config, "Amur.API.endpoints.navigate_through_poses_action", "navigate_through_poses"),
+        endpointOrDefault(config, "Amur.API.endpoints.follow_waypoints_action", "follow_waypoints"),
+        endpointOrDefault(config, "Amur.API.endpoints.spin_action", "spin"),
+        endpointOrDefault(config, "Amur.API.endpoints.initial_pose_topic", "initialpose")
+    };
+}
+
 #endif // RC_AGENT_ENDPOINT_BINDINGS_H
