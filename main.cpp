@@ -875,9 +875,7 @@ int main(int argc, char **argv)
   // Robot-specific ROS2 bindings live in libconfig; ROS2 parameters remain
   // independently usable for runtime tuning. The defaults preserve dev wiring.
   ConfigProcessor endpoint_config(robot_config_path);
-  const auto map_topic = endpointOrDefault(endpoint_config, "Amur.API.endpoints.map_topic", "/map");
-  const auto zones_topic = endpointOrDefault(endpoint_config, "Amur.API.endpoints.zones_topic",
-                                             "/mapannotator/rc_agent_zones");
+  const auto map_profile = loadMapEndpointProfile(endpoint_config);
   // Resolve all basecontrol endpoints from the same trusted libconfig
   // profile, including the two legacy auxiliary outputs.
   const auto base_profile = loadBaseControlEndpointProfile(endpoint_config);
@@ -892,12 +890,11 @@ int main(int argc, char **argv)
   });
   rclcpp::NodeOptions map_options;
   map_options.parameter_overrides({
-    rclcpp::Parameter("map.tf_map_frame",
-      endpointOrDefault(endpoint_config, "Amur.API.endpoints.tf_map_frame", "map")),
-    rclcpp::Parameter("map.tf_robot_frame",
-      endpointOrDefault(endpoint_config, "Amur.API.endpoints.tf_robot_frame", "base_link"))
+    rclcpp::Parameter("map.tf_map_frame", map_profile.tf_map_frame),
+    rclcpp::Parameter("map.tf_robot_frame", map_profile.tf_robot_frame)
   });
-  auto mapNode = std::make_shared<MapNode>(mapPtr, map_topic, zones_topic,
+  auto mapNode = std::make_shared<MapNode>(mapPtr, map_profile.map_topic,
+                                           map_profile.zones_topic,
                                            network->getClientInstance()->getMapMutex(), map_options);
   auto baseControlNode = std::make_shared<BaseControlNode>(
     controlsPtr->mutable_basecontrol(),
