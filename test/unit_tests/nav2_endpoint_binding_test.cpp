@@ -1009,3 +1009,70 @@ TEST_F(Nav2EndpointBindingTest, LatePreviousCancellationCannotCompleteReplacemen
     EXPECT_TRUE(canceled_handles.front() == goals[0]);
     EXPECT_TRUE(canceled_handles.front() != goals[1]);
 }
+
+
+// P2: two independently configured robot profiles must publish initial poses
+// only to their own ROS2 endpoints, even while both nodes are active.
+TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepInitialPoseEndpointsIsolated)
+{
+    using Pose = geometry_msgs::msg::PoseWithCovarianceStamped;
+    auto request_a = std::make_shared<Navigation::NavCommandRequest>();
+    auto response_a = std::make_shared<Navigation::NavCommandResponse>();
+    auto request_b = std::make_shared<Navigation::NavCommandRequest>();
+    auto response_b = std::make_shared<Navigation::NavCommandResponse>();
+    std::mutex mutex_a;
+    std::mutex mutex_b;
+    rclcpp::NodeOptions options_a;
+    options_a.parameter_overrides({
+        rclcpp::Parameter("nav2.initial_pose_topic", "/profile_a/initialpose")
+    });
+    rclcpp::NodeOptions options_b;
+    options_b.parameter_overrides({
+        rclcpp::Parameter("nav2.initial_pose_topic", "/profile_b/initialpose")
+    });
+    auto navigator_a = std::make_shared<RobotNavigator>(
+        "profile_a_navigator", request_a, response_a, mutex_a, options_a);
+    auto navigator_b = std::make_shared<RobotNavigator>(
+        "profile_b_navigator", request_b, response_b, mutex_b, options_b);
+    auto observer = std::make_shared<rclcpp::Node>("two_profile_pose_observer");
+    int received_a = 0;
+    int received_b = 0;
+    bool wrong_a = false;
+    bool wrong_b = false;
+    auto subscription_a = observer->create_subscription<Pose>(
+        "/profile_a/initialpose", 10, [&](const Pose::SharedPtr msg) {
+            ++received_a;
+            if (msg->pose.pose.position.x != 11.0) wrong_a = true;
+        });
+    auto subscription_b = observer->create_subscription<Pose>(
+        "/profile_b/initialpose", 10, [&](const Pose::SharedPtr msg) {
+            ++received_b;
+            if (msg->pose.pose.position.x != 22.0) wrong_b = true;
+        });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(navigator_a);
+    executor.add_node(navigator_b);
+    executor.add_node(observer);
+    Pose pose_a;
+    pose_a.header.frame_id = "map";
+    pose_a.pose.pose.position.x = 11.0;
+    Pose pose_b;
+    pose_b.header.frame_id = "map";
+    pose_b.pose.pose.position.x = 22.0;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while ((received_a == 0 || received_b == 0) &&
+           std::chrono::steady_clock::now() < deadline) {
+        // DDS discovery is asynchronous; retry both bounded publishers.
+        navigator_a->setInitialPose(pose_a);
+        navigator_b->setInitialPose(pose_b);
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(25));
+    }
+    // Drain already queued samples to catch cross-routing after both arrive.
+    for (int i = 0; i < 10; ++i) executor.spin_some();
+    EXPECT_GT(received_a, 0);
+    EXPECT_GT(received_b, 0);
+    EXPECT_FALSE(wrong_a);
+    EXPECT_FALSE(wrong_b);
+    EXPECT_TRUE(rclcpp::ok());
+}
