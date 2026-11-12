@@ -1110,6 +1110,8 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
     int goals_b = 0;
     bool wrong_a = false;
     bool wrong_b = false;
+    std::shared_ptr<Handle> pending_a;
+    std::shared_ptr<Handle> pending_b;
     auto server_a = rclcpp_action::create_server<Action>(
         server_node, "/profile_a/navigate_to_pose",
         [&](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal> goal) {
@@ -1120,9 +1122,7 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
         [](const std::shared_ptr<Handle>) {
             return rclcpp_action::CancelResponse::ACCEPT;
         },
-        [](const std::shared_ptr<Handle> handle) {
-            handle->succeed(std::make_shared<Action::Result>());
-        });
+        [&](const std::shared_ptr<Handle> handle) { pending_a = handle; });
     auto server_b = rclcpp_action::create_server<Action>(
         server_node, "/profile_b/navigate_to_pose",
         [&](const rclcpp_action::GoalUUID &, std::shared_ptr<const Action::Goal> goal) {
@@ -1133,9 +1133,7 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
         [](const std::shared_ptr<Handle>) {
             return rclcpp_action::CancelResponse::ACCEPT;
         },
-        [](const std::shared_ptr<Handle> handle) {
-            handle->succeed(std::make_shared<Action::Result>());
-        });
+        [&](const std::shared_ptr<Handle> handle) { pending_b = handle; });
     auto observer_a = rclcpp_action::create_client<Action>(
         server_node, "/profile_a/navigate_to_pose");
     auto observer_b = rclcpp_action::create_client<Action>(
@@ -1159,25 +1157,32 @@ TEST_F(Nav2EndpointBindingTest, TwoProfilesKeepNavigateToPoseActionsIsolated)
     geometry_msgs::msg::PoseStamped pose_a;
     pose_a.header.frame_id = "map";
     pose_a.pose.position.x = 11.0;
-    navigator_a->goToPose(pose_a);
-    ASSERT_TRUE(spin_until([&] { return navigator_a->isTaskComplete(); }));
-    EXPECT_TRUE(navigator_a->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
-    EXPECT_EQ(goals_a, 1);
-    EXPECT_EQ(goals_b, 0);
-    EXPECT_FALSE(wrong_a);
-    EXPECT_FALSE(navigator_b->isTaskComplete() &&
-                 navigator_b->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
-
+    // Both goals must be in flight simultaneously; finishing B must not
+    // complete A or leak the result across independently bound endpoints.
     geometry_msgs::msg::PoseStamped pose_b;
     pose_b.header.frame_id = "map";
     pose_b.pose.position.x = 22.0;
+    navigator_a->goToPose(pose_a);
     navigator_b->goToPose(pose_b);
-    ASSERT_TRUE(spin_until([&] { return navigator_b->isTaskComplete(); }));
-    EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    ASSERT_TRUE(spin_until([&] { return pending_a && pending_b; }));
     EXPECT_EQ(goals_a, 1);
     EXPECT_EQ(goals_b, 1);
     EXPECT_FALSE(wrong_a);
     EXPECT_FALSE(wrong_b);
+    EXPECT_FALSE(navigator_a->isTaskComplete());
+    EXPECT_FALSE(navigator_b->isTaskComplete());
+
+    pending_b->succeed(std::make_shared<Action::Result>());
+    ASSERT_TRUE(spin_until([&] { return navigator_b->isTaskComplete(); }));
+    EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_FALSE(navigator_a->isTaskComplete());
+    EXPECT_TRUE(navigator_a->getResult() == rclcpp_action::ResultCode::UNKNOWN);
+
+    pending_a->succeed(std::make_shared<Action::Result>());
+    ASSERT_TRUE(spin_until([&] { return navigator_a->isTaskComplete(); }));
     EXPECT_TRUE(navigator_a->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_TRUE(navigator_b->getResult() == rclcpp_action::ResultCode::SUCCEEDED);
+    EXPECT_EQ(goals_a, 1);
+    EXPECT_EQ(goals_b, 1);
     EXPECT_TRUE(rclcpp::ok());
 }
