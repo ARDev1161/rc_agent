@@ -47,7 +47,14 @@ Amur: {
       cmd_vel_smoothed_topic = "/alpha/cmd_vel_smoothed";
       cmd_vel_nav_topic = "/alpha/cmd_vel_nav";
       map_topic = "/alpha/map";
+      zones_topic = "/alpha/mapannotator/rc_agent_zones";
+      tf_map_frame = "map";
+      tf_robot_frame = "base_link";
       navigate_to_pose_action = "/alpha/navigate_to_pose";
+      navigate_through_poses_action = "/alpha/navigate_through_poses";
+      follow_waypoints_action = "/alpha/follow_waypoints";
+      spin_action = "/alpha/spin";
+      initial_pose_topic = "/alpha/initialpose";
     };
   };
 };
@@ -55,7 +62,7 @@ Amur: {
 
 `cmd_vel_smoothed_topic` and `cmd_vel_nav_topic` bind the **existing legacy auxiliary selectors** to this robot's ROS2 namespace; they do not allow a remote caller to supply arbitrary ROS2 topic names. Badly typed or empty configured endpoint values fail closed. ROS2 node parameters (for example speed scaling) remain separate from the libconfig endpoint profile.
 
-Different robots should use distinct configured topic and action names. P2 tests verify independent profiles and real ROS2 message delivery, but do **not** establish P3 gRPC multi-robot session isolation or authorize v2 teleoperation. V2 velocity stays disabled until TTL/session/lease/deadman/watchdog are enforced.
+Different robots should use distinct configured topic and action names. P2 config tests load all five Nav2 names from independent alpha/beta files, and existing ROS2 mock-action tests verify goal/result/cancel routing. They also verify independent topic profiles and real ROS2 message delivery, but do **not** establish P3 gRPC multi-robot session isolation or authorize v2 teleoperation. V2 velocity stays disabled until TTL/session/lease/deadman/watchdog are enforced.
 
 ## Compatibility first
 
