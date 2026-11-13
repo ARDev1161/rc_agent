@@ -806,3 +806,20 @@ TEST(ConfigEndpointProfiles, EmbeddedOrPaddedWhitespaceFailsClosed) {
   }
   fs::remove(path);
 }
+
+
+// P2: a nonempty ROS endpoint containing an escaped control character must
+// be rejected before ROS2 node construction. This also checks libconfig's
+// decoding boundary rather than testing a pre-sanitized C++ literal.
+TEST(ConfigEndpointProfiles, EscapedControlCharacterFailsClosed) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_control_char_endpoint.cfg";
+  {
+    std::ofstream out(path);
+    out << R"(Amur: { API: { endpoints: {
+      navigate_to_pose_action = "/robot\t/navigate_to_pose";
+    }; }; };)";
+  }
+  ConfigProcessor config(path.string());
+  EXPECT_THROW(loadNav2EndpointProfile(config), std::invalid_argument);
+  fs::remove(path);
+}
