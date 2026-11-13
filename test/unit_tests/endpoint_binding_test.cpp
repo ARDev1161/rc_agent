@@ -320,13 +320,14 @@ TEST_F(EndpointBindingTest, NonFiniteOdometryCannotCorruptMotionState)
     for (double invalid : {std::numeric_limits<double>::quiet_NaN(),
                            std::numeric_limits<double>::infinity(),
                            -std::numeric_limits<double>::infinity()}) {
-        for (int axis = 0; axis < 2; ++axis) {
+        for (int axis = 0; axis < 6; ++axis) {
             Odom malformed = moving;
-            if (axis == 0) {
-                malformed.twist.twist.linear.x = invalid;
-            } else {
-                malformed.twist.twist.angular.z = invalid;
-            }
+            double *components[] = {
+                &malformed.twist.twist.linear.x, &malformed.twist.twist.linear.y,
+                &malformed.twist.twist.linear.z, &malformed.twist.twist.angular.x,
+                &malformed.twist.twist.angular.y, &malformed.twist.twist.angular.z
+            };
+            *components[axis] = invalid;
             publisher->publish(malformed);
             const auto settle = std::chrono::steady_clock::now() + std::chrono::milliseconds(70);
             while (std::chrono::steady_clock::now() < settle) {
