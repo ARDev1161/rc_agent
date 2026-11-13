@@ -210,9 +210,14 @@ void BaseControlNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
     std::lock_guard<std::mutex> lock(status_mutex_);
     // A malformed odometry sample must not drive the state machine or poison
     // the cached motion state. Wait for the next valid sensor sample.
-    const double linear = msg->twist.twist.linear.x;
-    const double angular = msg->twist.twist.angular.z;
-    if (!std::isfinite(linear) || !std::isfinite(angular)) {
+    const auto &twist = msg->twist.twist;
+    const double linear = twist.linear.x;
+    const double angular = twist.angular.z;
+    // Validate the complete six-axis odometry sample even on a planar robot.
+    // A malformed unused axis must not advance the cached motion state.
+    if (!std::isfinite(twist.linear.x) || !std::isfinite(twist.linear.y) ||
+        !std::isfinite(twist.linear.z) || !std::isfinite(twist.angular.x) ||
+        !std::isfinite(twist.angular.y) || !std::isfinite(twist.angular.z)) {
         RCLCPP_WARN(this->get_logger(), "Ignoring non-finite odometry velocity");
         return;
     }
