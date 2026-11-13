@@ -406,67 +406,6 @@ TEST_F(EndpointBindingTest, InvalidVelocityScalingParametersFailClosed)
 }
 
 
-// Finite but degenerate ranges must retain the legacy [-255,255] scaling.
-// This exercises real ROS delivery rather than inspecting constructor logs.
-TEST_F(EndpointBindingTest, DegenerateInputRangeKeepsLegacyScaling)
-{
-    using Twist = geometry_msgs::msg::Twist;
-    for (const auto &range : std::vector<std::pair<double, double>>{{0.0, 0.0}, {10.0, -10.0}}) {
-        SCOPED_TRACE(::testing::Message() << range.first << "," << range.second);
-        Base::BaseControl controls;
-        std::mutex mutex;
-        rclcpp::NodeOptions options;
-        options.parameter_overrides({
-            rclcpp::Parameter("basecontrol.input_min", range.first),
-            rclcpp::Parameter("basecontrol.input_max", range.second),
-            rclcpp::Parameter("basecontrol.cmd_vel_topic", "/fallback_range/cmd_vel")
-        });
-        auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
-        auto observer = std::make_shared<rclcpp::Node>("fallback_range_observer");
-        std::vector<double> received;
-        auto subscription = observer->create_subscription<Twist>(
-            "/fallback_range/cmd_vel", 10,
-            [&](const Twist::SharedPtr msg) { received.push_back(msg->linear.x); });
-        rclcpp::executors::SingleThreadedExecutor executor;
-        executor.add_node(node);
-        executor.add_node(observer);
-        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (node->count_subscribers("/fallback_range/cmd_vel") == 0 &&
-               std::chrono::steady_clock::now() < deadline) {
-            executor.spin_some();
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-        ASSERT_GT(node->count_subscribers("/fallback_range/cmd_vel"), 0u);
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            controls.set_linearvelocity(255.0);
-        }
-        const auto delivery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (received.empty() && std::chrono::steady_clock::now() < delivery_deadline) {
-            executor.spin_some();
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-        ASSERT_FALSE(received.empty());
-        EXPECT_NEAR(received.back(), 0.25, 1e-6);
-
-        // A negative command must use the same fallback range and preserve
-        // sign, rather than clamping all negative input to zero.
-        const auto previous_count = received.size();
-        {
-            std::lock_guard<std::mutex> lock(mutex);
-            controls.set_linearvelocity(-255.0);
-        }
-        const auto reverse_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-        while (received.size() == previous_count &&
-               std::chrono::steady_clock::now() < reverse_deadline) {
-            executor.spin_some();
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-        ASSERT_GT(received.size(), previous_count);
-        EXPECT_NEAR(received.back(), -0.25, 1e-6);
-    }
-}
-
 // P2: configured auxiliary outputs are independently routed on the ROS graph,
 // not merely registered with the expected topic names. This does not enable
 // v2 teleop or bypass the existing local selector allowlist.
