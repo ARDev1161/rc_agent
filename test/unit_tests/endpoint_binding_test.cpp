@@ -646,3 +646,35 @@ TEST_F(EndpointBindingTest, NonfiniteProtobufVelocityDoesNotBlockRecovery)
     ASSERT_EQ(received.size(), 1u);
     EXPECT_GT(received.front(), 0.0);
 }
+
+
+// Regression: concurrent odometry callbacks must serialize state-machine
+// transitions; no callback may read another callback's mutable velocity sample.
+TEST_F(EndpointBindingTest, ConcurrentOdometryCallbacksKeepStateConsistent)
+{
+    using Odom = nav_msgs::msg::Odometry;
+    Base::BaseControl control;
+    std::mutex mutex;
+    auto node = std::make_shared<BaseControlNode>(&control, mutex);
+    auto publisher_node = std::make_shared<rclcpp::Node>("concurrent_odom_publisher");
+    auto publisher = publisher_node->create_publisher<Odom>("/odom", 10);
+    rclcpp::executors::MultiThreadedExecutor executor(rclcpp::ExecutorOptions(), 2);
+    executor.add_node(node);
+    executor.add_node(publisher_node);
+    std::thread spinner([&executor] { executor.spin(); });
+    Odom moving;
+    moving.twist.twist.linear.x = 0.5;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    bool observed_running = false;
+    while (std::chrono::steady_clock::now() < deadline) {
+        publisher->publish(moving);
+        if (node->getBaseControlStatus() == BaseControlNode::ControlStatus::RUNNING) {
+            observed_running = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    executor.cancel();
+    spinner.join();
+    EXPECT_TRUE(observed_running);
+}
