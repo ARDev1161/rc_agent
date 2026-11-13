@@ -215,6 +215,71 @@ TEST_F(EndpointBindingTest, TwoProfilesKeepVelocityPublishersIsolated)
 }
 
 
+// Reject every non-finite component before publishing, including non-forward
+// axes. A rejected sample must not poison a later valid command. This is a
+// local ROS output test, not an authorization for remote v2 teleoperation.
+TEST_F(EndpointBindingTest, NonFiniteSixAxisVelocityCannotReachRos)
+{
+    using Twist = geometry_msgs::msg::Twist;
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/nonfinite/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/nonfinite/cmd_vel")
+    });
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("nonfinite_velocity_observer");
+    std::vector<Twist> received;
+    auto subscription = observer->create_subscription<Twist>(
+        "/nonfinite/cmd_vel", 10,
+        [&](const Twist::SharedPtr msg) { received.push_back(*msg); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+
+    const auto discovery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/nonfinite/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_GT(node->count_subscribers("/nonfinite/cmd_vel"), 0u);
+
+    for (int axis = 0; axis < 6; ++axis) {
+        for (double invalid : {std::numeric_limits<double>::quiet_NaN(),
+                               std::numeric_limits<double>::infinity(),
+                               -std::numeric_limits<double>::infinity()}) {
+            Twist command;
+            double *components[] = {&command.linear.x, &command.linear.y,
+                                    &command.linear.z, &command.angular.x,
+                                    &command.angular.y, &command.angular.z};
+            *components[axis] = invalid;
+            node->publishToBaseControlNode(command, "cmd_vel");
+        }
+    }
+    const auto reject_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(350);
+    while (std::chrono::steady_clock::now() < reject_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(received.empty());
+
+    Twist valid;
+    valid.linear.x = 0.125;
+    valid.angular.z = -0.25;
+    node->publishToBaseControlNode(valid, "cmd_vel");
+    const auto delivery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.empty() && std::chrono::steady_clock::now() < delivery_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_DOUBLE_EQ(received.front().linear.x, 0.125);
+    EXPECT_DOUBLE_EQ(received.front().angular.z, -0.25);
+}
+
+
 // V2 SI-unit contract at the local ROS output boundary: every linear
 // component is m/s and every angular component is rad/s. No 255 scaling,
 // deadzone, axis sign inversion, or truncation is allowed. This test exercises
