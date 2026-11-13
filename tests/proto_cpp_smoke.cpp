@@ -42,6 +42,30 @@ int main() {
   assert(restored.navcontrolstatus().status() == Navigation::IN_PROGRESS);
   assert(restored.video_stream().pipeline() == "udpsrc port=1234");
 
+  // v2 velocity is expressed in SI units, never legacy joystick ticks.
+  rc::api::v2::Velocity velocity;
+  velocity.mutable_linear()->set_x(0.125);
+  velocity.mutable_linear()->set_y(-0.0625);
+  velocity.mutable_linear()->set_z(0.03125);
+  velocity.mutable_angular()->set_x(-0.375);
+  velocity.mutable_angular()->set_y(0.625);
+  velocity.mutable_angular()->set_z(-0.8125);
+  velocity.set_frame_id("base_link");
+  velocity.set_sequence(42);
+  velocity.set_valid_for_ms(250);
+  assert(velocity.SerializeToString(&wire));
+  rc::api::v2::Velocity parsed_velocity;
+  assert(parsed_velocity.ParseFromString(wire));
+  assert(parsed_velocity.linear().x() == 0.125);
+  assert(parsed_velocity.linear().y() == -0.0625);
+  assert(parsed_velocity.linear().z() == 0.03125);
+  assert(parsed_velocity.angular().x() == -0.375);
+  assert(parsed_velocity.angular().y() == 0.625);
+  assert(parsed_velocity.angular().z() == -0.8125);
+  assert(parsed_velocity.frame_id() == "base_link");
+  assert(parsed_velocity.sequence() == 42);
+  assert(parsed_velocity.valid_for_ms() == 250);
+
   rc::api::v2::ChatMessage chat;
   chat.set_text("Are you there?");
   assert(chat.content_case() == rc::api::v2::ChatMessage::kText);
