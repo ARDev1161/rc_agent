@@ -785,3 +785,24 @@ TEST(ConfigEndpointProfiles, WhitespaceOnlyBindingsFailClosed) {
   }
   fs::remove(path);
 }
+
+// P2: nonempty names with embedded or surrounding whitespace are invalid
+// ROS graph names too; rejecting only whitespace-only strings is insufficient.
+TEST(ConfigEndpointProfiles, EmbeddedOrPaddedWhitespaceFailsClosed) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_padded_endpoints.cfg";
+  for (const auto &key : {"cmd_vel_topic", "cmd_vel_smoothed_topic",
+                          "navigate_to_pose_action", "map_topic", "tf_map_frame"}) {
+    for (const auto &value : {"/robot a/topic", " /robot/topic", "/robot/topic "}) {
+      {
+        std::ofstream out(path);
+        out << "Amur: { API: { endpoints: { " << key << " = \""
+            << value << "\"; }; }; };";
+      }
+      ConfigProcessor config(path.string());
+      EXPECT_THROW(endpointOrDefault(config, std::string("Amur.API.endpoints.") + key,
+                                     "fallback"), std::invalid_argument)
+          << key << " value=" << value;
+    }
+  }
+  fs::remove(path);
+}
