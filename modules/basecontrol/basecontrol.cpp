@@ -208,8 +208,16 @@ void BaseControlNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
     // Keep the odometry sample and state transition atomic with respect to
     // concurrent callbacks in a MultiThreadedExecutor.
     std::lock_guard<std::mutex> lock(status_mutex_);
-    actual_linear_vel_ = msg->twist.twist.linear.x;
-    actual_angular_vel_ = msg->twist.twist.angular.z;
+    // A malformed odometry sample must not drive the state machine or poison
+    // the cached motion state. Wait for the next valid sensor sample.
+    const double linear = msg->twist.twist.linear.x;
+    const double angular = msg->twist.twist.angular.z;
+    if (!std::isfinite(linear) || !std::isfinite(angular)) {
+        RCLCPP_WARN(this->get_logger(), "Ignoring non-finite odometry velocity");
+        return;
+    }
+    actual_linear_vel_ = linear;
+    actual_angular_vel_ = angular;
     const ControlStatus innerStatus = state_machine_->update(
         actual_linear_vel_, actual_angular_vel_, now);
     last_cmd_time_ = state_machine_->lastCommandTime();
