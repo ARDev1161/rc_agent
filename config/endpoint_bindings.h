@@ -10,7 +10,7 @@
 #include <string>
 
 // Endpoint names are trusted local libconfig values, never remote protobuf input.
-// An omitted value preserves the legacy ROS2 name; a malformed/empty value fails closed.
+// An omitted value preserves the legacy ROS2 name; malformed, empty or control-character values fail closed.
 inline std::string endpointOrDefault(ConfigProcessor &config,
                                     const std::string &key,
                                     const std::string &fallback)
@@ -21,7 +21,7 @@ inline std::string endpointOrDefault(ConfigProcessor &config,
     }
     std::string value;
     if (type != libconfig::Setting::TypeString ||
-        config.searchString(key, value) != EXIT_SUCCESS || value.empty() || std::any_of(value.begin(), value.end(), [](unsigned char ch) { return std::isspace(ch) != 0; })) {
+        config.searchString(key, value) != EXIT_SUCCESS || value.empty() || std::any_of(value.begin(), value.end(), [](unsigned char ch) { return std::isspace(ch) != 0 || std::iscntrl(ch) != 0; })) {
         throw std::invalid_argument("Invalid robot endpoint setting: " + key);
     }
     return value;
