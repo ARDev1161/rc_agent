@@ -315,7 +315,7 @@ TEST_F(EndpointBindingTest, NonFiniteOdometryCannotCorruptMotionState)
         executor.spin_some();
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    ASSERT_EQ(node->getBaseControlStatus(), BaseControlNode::ControlStatus::RUNNING);
+    ASSERT_TRUE(node->getBaseControlStatus() == BaseControlNode::ControlStatus::RUNNING);
 
     for (double invalid : {std::numeric_limits<double>::quiet_NaN(),
                            std::numeric_limits<double>::infinity(),
@@ -333,7 +333,7 @@ TEST_F(EndpointBindingTest, NonFiniteOdometryCannotCorruptMotionState)
                 executor.spin_some();
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
             }
-            EXPECT_EQ(node->getBaseControlStatus(), BaseControlNode::ControlStatus::RUNNING);
+            EXPECT_TRUE(node->getBaseControlStatus() == BaseControlNode::ControlStatus::RUNNING);
         }
     }
 
@@ -345,7 +345,7 @@ TEST_F(EndpointBindingTest, NonFiniteOdometryCannotCorruptMotionState)
         executor.spin_some();
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    EXPECT_EQ(node->getBaseControlStatus(), BaseControlNode::ControlStatus::STOPPED);
+    EXPECT_TRUE(node->getBaseControlStatus() == BaseControlNode::ControlStatus::STOPPED);
 }
 
 
