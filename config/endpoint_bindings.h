@@ -21,7 +21,7 @@ inline std::string endpointOrDefault(ConfigProcessor &config,
     }
     std::string value;
     if (type != libconfig::Setting::TypeString ||
-        config.searchString(key, value) != EXIT_SUCCESS || value.empty() || std::all_of(value.begin(), value.end(), [](unsigned char ch) { return std::isspace(ch) != 0; })) {
+        config.searchString(key, value) != EXIT_SUCCESS || value.empty() || std::any_of(value.begin(), value.end(), [](unsigned char ch) { return std::isspace(ch) != 0; })) {
         throw std::invalid_argument("Invalid robot endpoint setting: " + key);
     }
     return value;
