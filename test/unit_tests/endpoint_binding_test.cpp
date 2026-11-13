@@ -744,6 +744,79 @@ TEST_F(EndpointBindingTest, NonfiniteVelocityCommandsAreNotPublished)
 }
 
 
+// Reject non-finite motion in the TwistStamped profile too. This covers
+// the stamped publisher branch separately from the Twist and auxiliary paths.
+// This is a local ROS binding test, not remote v2 velocity authorization.
+TEST_F(EndpointBindingTest, NonFiniteStampedVelocityCannotReachRos)
+{
+    using Twist = geometry_msgs::msg::Twist;
+    using Stamped = geometry_msgs::msg::TwistStamped;
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/stamped_guard/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/stamped_guard/cmd_vel"),
+        rclcpp::Parameter("basecontrol.cmd_vel_msg_type", "twist_stamped"),
+        rclcpp::Parameter("basecontrol.cmd_vel_frame_id", "stamped_guard/base_link")
+    });
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("stamped_guard_observer");
+    std::vector<Stamped> received;
+    auto subscription = observer->create_subscription<Stamped>(
+        "/stamped_guard/cmd_vel", 10,
+        [&](const Stamped::SharedPtr msg) { received.push_back(*msg); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/stamped_guard/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_GT(node->count_subscribers("/stamped_guard/cmd_vel"), 0u);
+
+    for (double invalid : {std::numeric_limits<double>::quiet_NaN(),
+                           std::numeric_limits<double>::infinity(),
+                           -std::numeric_limits<double>::infinity()}) {
+        for (int axis = 0; axis < 6; ++axis) {
+            Twist command;
+            command.linear.x = 0.1;
+            command.angular.z = -0.2;
+            switch (axis) {
+            case 0: command.linear.x = invalid; break;
+            case 1: command.linear.y = invalid; break;
+            case 2: command.linear.z = invalid; break;
+            case 3: command.angular.x = invalid; break;
+            case 4: command.angular.y = invalid; break;
+            case 5: command.angular.z = invalid; break;
+            }
+            node->publishToBaseControlNode(command, "cmd_vel");
+        }
+    }
+    const auto settle = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
+    while (std::chrono::steady_clock::now() < settle) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(received.empty());
+
+    Twist valid;
+    valid.linear.x = -0.125;
+    valid.angular.z = 0.375;
+    node->publishToBaseControlNode(valid, "cmd_vel");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.empty() && std::chrono::steady_clock::now() < deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received.front().header.frame_id, "stamped_guard/base_link");
+    EXPECT_DOUBLE_EQ(received.front().twist.linear.x, -0.125);
+    EXPECT_DOUBLE_EQ(received.front().twist.angular.z, 0.375);
+}
+
 // v2-only safety: obsolete protobuf BaseControl must not automatically
 // publish motion, even if it carries a finite command.
 TEST_F(EndpointBindingTest, LegacyProtobufVelocityCannotPublishMotion)
