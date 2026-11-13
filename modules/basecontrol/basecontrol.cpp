@@ -230,17 +230,16 @@ BaseControlNode::ControlStatus BaseControlNode::getBaseControlStatus() {
 void BaseControlNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
     const auto now = this->now();
 
-    {
-        std::lock_guard<std::mutex> lock(status_mutex_);
-        actual_linear_vel_ = msg->twist.twist.linear.x;
-        actual_angular_vel_ = msg->twist.twist.angular.z;
-    }
-
-    ControlStatus innerStatus = state_machine_->update(actual_linear_vel_, actual_angular_vel_, now);
+    // Keep the odometry sample and state transition atomic with respect to
+    // concurrent callbacks in a MultiThreadedExecutor.
+    std::lock_guard<std::mutex> lock(status_mutex_);
+    actual_linear_vel_ = msg->twist.twist.linear.x;
+    actual_angular_vel_ = msg->twist.twist.angular.z;
+    const ControlStatus innerStatus = state_machine_->update(
+        actual_linear_vel_, actual_angular_vel_, now);
     last_cmd_time_ = state_machine_->lastCommandTime();
 
     {
-        std::lock_guard<std::mutex> lock(status_mutex_);
         if (current_status_ != innerStatus) {
             RCLCPP_DEBUG(this->get_logger(), "Updating status from %d to %d",
                         static_cast<int>(current_status_), static_cast<int>(innerStatus));
