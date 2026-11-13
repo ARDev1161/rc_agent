@@ -448,6 +448,22 @@ TEST_F(EndpointBindingTest, DegenerateInputRangeKeepsLegacyScaling)
         }
         ASSERT_FALSE(received.empty());
         EXPECT_NEAR(received.back(), 0.25, 1e-6);
+
+        // A negative command must use the same fallback range and preserve
+        // sign, rather than clamping all negative input to zero.
+        const auto previous_count = received.size();
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            controls.set_linearvelocity(-255.0);
+        }
+        const auto reverse_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (received.size() == previous_count &&
+               std::chrono::steady_clock::now() < reverse_deadline) {
+            executor.spin_some();
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+        ASSERT_GT(received.size(), previous_count);
+        EXPECT_NEAR(received.back(), -0.25, 1e-6);
     }
 }
 
