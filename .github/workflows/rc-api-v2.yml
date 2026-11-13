@@ -61,7 +61,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          g++ -std=c++17 -O0 -I generated generated/*.pb.cc tests/proto_cpp_smoke.cpp -lprotobuf -pthread -o generated/protocol_smoke
+          g++ -std=c++17 -O0 -I. -I generated generated/*.pb.cc tests/proto_cpp_smoke.cpp -lprotobuf -pthread -o generated/protocol_smoke
           ./generated/protocol_smoke
   grpc-client-loopback:
     runs-on: ubuntu-22.04
