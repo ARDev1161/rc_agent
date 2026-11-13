@@ -765,3 +765,23 @@ TEST(ConfigEndpointProfiles, MapMalformedEndpointValuesFailClosed) {
   }
   fs::remove(path);
 }
+
+// P2: whitespace-only local endpoint names must fail closed rather than
+// creating ROS2 publishers/actions with unusable names.
+TEST(ConfigEndpointProfiles, WhitespaceOnlyBindingsFailClosed) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_whitespace_endpoints.cfg";
+  for (const auto &key : {"cmd_vel_topic", "cmd_vel_smoothed_topic",
+                          "navigate_to_pose_action", "map_topic", "tf_map_frame"}) {
+    for (const auto &value : {" ", "  \\t  "}) {
+      {
+        std::ofstream out(path);
+        out << "Amur: { API: { endpoints: { " << key << " = \\"" << value
+            << "\\"; }; }; };";
+      }
+      ConfigProcessor config(path.string());
+      EXPECT_THROW(endpointOrDefault(config, std::string("Amur.API.endpoints.") + key,
+                                     "fallback"), std::invalid_argument) << key;
+    }
+  }
+  fs::remove(path);
+}
