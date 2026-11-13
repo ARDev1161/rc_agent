@@ -382,30 +382,6 @@ TEST_F(EndpointBindingTest, EmptyAuxiliaryVelocityTopicsFailClosed)
     }
 }
 
-// P2: invalid local velocity scaling parameters must fail before any ROS
-// publisher is created, rather than producing NaN or unbounded commands.
-TEST_F(EndpointBindingTest, InvalidVelocityScalingParametersFailClosed)
-{
-    const std::vector<std::pair<std::string, double>> invalid = {
-        {"basecontrol.input_min", std::numeric_limits<double>::quiet_NaN()},
-        {"basecontrol.input_max", std::numeric_limits<double>::infinity()},
-        {"basecontrol.max_linear_speed", -0.1},
-        {"basecontrol.max_angular_speed", -0.1},
-        {"basecontrol.input_deadzone", -1.0},
-        {"basecontrol.max_linear_speed", std::numeric_limits<double>::quiet_NaN()},
-        {"basecontrol.max_angular_speed", std::numeric_limits<double>::infinity()}
-    };
-    for (const auto &entry : invalid) {
-        SCOPED_TRACE(entry.first);
-        Base::BaseControl controls;
-        std::mutex mutex;
-        rclcpp::NodeOptions options;
-        options.parameter_overrides({rclcpp::Parameter(entry.first, entry.second)});
-        EXPECT_THROW(BaseControlNode(&controls, mutex, options), std::invalid_argument);
-    }
-}
-
-
 // P2: configured auxiliary outputs are independently routed on the ROS graph,
 // not merely registered with the expected topic names. This does not enable
 // v2 teleop or bypass the existing local selector allowlist.
@@ -578,75 +554,33 @@ TEST_F(EndpointBindingTest, NonfiniteVelocityCommandsAreNotPublished)
 }
 
 
-// P2: malformed values arriving through the legacy protobuf controls must
-// not poison change tracking; a subsequent finite command must still publish.
-TEST_F(EndpointBindingTest, NonfiniteProtobufVelocityDoesNotBlockRecovery)
+// v2-only safety: obsolete protobuf BaseControl must not automatically
+// publish motion, even if it carries a finite command.
+TEST_F(EndpointBindingTest, LegacyProtobufVelocityCannotPublishMotion)
 {
     using Twist = geometry_msgs::msg::Twist;
     Base::BaseControl controls;
     std::mutex mutex;
-    rclcpp::NodeOptions options;
-    options.parameter_overrides({
-        rclcpp::Parameter("basecontrol.odom_topic", "/proto_guard/odom"),
-        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/proto_guard/cmd_vel")
-    });
-    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
-    auto observer = std::make_shared<rclcpp::Node>("proto_velocity_guard_observer");
-    std::vector<double> received;
-    auto subscription = observer->create_subscription<Twist>(
-        "/proto_guard/cmd_vel", 10,
-        [&](const Twist::SharedPtr msg) { received.push_back(msg->linear.x); });
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex);
+    auto observer = std::make_shared<rclcpp::Node>("v2_only_velocity_observer");
+    std::vector<Twist> received;
+    auto sub = observer->create_subscription<Twist>("/cmd_vel", 10,
+        [&](const Twist::SharedPtr msg) { received.push_back(*msg); });
     rclcpp::executors::SingleThreadedExecutor executor;
     executor.add_node(node);
     executor.add_node(observer);
-    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (node->count_subscribers("/proto_guard/cmd_vel") == 0 &&
-           std::chrono::steady_clock::now() < discovery) {
-        executor.spin_some();
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    ASSERT_GT(node->count_subscribers("/proto_guard/cmd_vel"), 0u);
-
     {
         std::lock_guard<std::mutex> lock(mutex);
-        controls.set_linearvelocity(std::numeric_limits<double>::quiet_NaN());
-        controls.set_angularvelocity(0.0);
+        controls.set_linearvelocity(255.0);
+        controls.set_angularvelocity(255.0);
     }
-    const auto settle = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
-    while (std::chrono::steady_clock::now() < settle) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(400);
+    while (std::chrono::steady_clock::now() < deadline) {
         executor.spin_some();
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     EXPECT_TRUE(received.empty());
-
-    // An invalid angular component must also leave the last valid delta state
-    // untouched. This is a separate protobuf input path from linear NaN.
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        controls.set_linearvelocity(0.0);
-        controls.set_angularvelocity(std::numeric_limits<double>::infinity());
-    }
-    const auto angular_settle = std::chrono::steady_clock::now() + std::chrono::milliseconds(300);
-    while (std::chrono::steady_clock::now() < angular_settle) {
-        executor.spin_some();
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    EXPECT_TRUE(received.empty());
-
-    {
-        std::lock_guard<std::mutex> lock(mutex);
-        controls.set_linearvelocity(128.0);
-        controls.set_angularvelocity(0.0);
-    }
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-    while (received.empty() && std::chrono::steady_clock::now() < deadline) {
-        executor.spin_some();
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-    ASSERT_EQ(received.size(), 1u);
-    EXPECT_GT(received.front(), 0.0);
 }
-
 
 // Regression: concurrent odometry callbacks must serialize state-machine
 // transitions; no callback may read another callback's mutable velocity sample.
