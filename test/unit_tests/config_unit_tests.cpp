@@ -775,8 +775,8 @@ TEST(ConfigEndpointProfiles, WhitespaceOnlyBindingsFailClosed) {
     for (const auto &value : {" ", "  \\t  "}) {
       {
         std::ofstream out(path);
-        out << "Amur: { API: { endpoints: { " << key << " = \\"" << value
-            << "\\"; }; }; };";
+        out << "Amur: { API: { endpoints: { " << key << " = \"" << value
+            << "\"; }; }; };";
       }
       ConfigProcessor config(path.string());
       EXPECT_THROW(endpointOrDefault(config, std::string("Amur.API.endpoints.") + key,
