@@ -55,6 +55,8 @@ private:
     ControlStatus current_status_ = ControlStatus::READY_OK;
     std::mutex status_mutex_;
 
+    rclcpp::Time last_cmd_time_;
+
 };
 
 #endif // BASE_CONTROL_HPP
