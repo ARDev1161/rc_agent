@@ -98,6 +98,38 @@ int main() {
   velocity.mutable_linear()->set_x(std::numeric_limits<double>::quiet_NaN());
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
 
+  // Every non-finite component must fail closed independently, not only linear.x.
+  const double bad_values[] = {
+      std::numeric_limits<double>::quiet_NaN(),
+      std::numeric_limits<double>::infinity(),
+      -std::numeric_limits<double>::infinity()};
+  for (int axis = 0; axis < 6; ++axis) {
+    for (double bad : bad_values) {
+      rc::api::v2::Velocity candidate = velocity;
+      candidate.mutable_linear()->set_x(0.125);
+      auto* component = axis < 3 ? candidate.mutable_linear() : candidate.mutable_angular();
+      switch (axis % 3) {
+        case 0: component->set_x(bad); break;
+        case 1: component->set_y(bad); break;
+        default: component->set_z(bad); break;
+      }
+      gate.grant("session-A", "lease-A", t0);
+      assert(!gate.admit(candidate, "session-A", "lease-A", true, t0));
+      assert(gate.expired(t0));
+      assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+    }
+  }
+  // An invalid frame or time rollback must not preserve the prior lease.
+  velocity.mutable_linear()->set_x(0.125);
+  gate.grant("session-A", "lease-A", t0);
+  velocity.clear_frame_id();
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  velocity.set_frame_id("base_link");
+  gate.grant("session-A", "lease-A", t0 + std::chrono::milliseconds(1));
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  assert(!gate.admit(velocity, "session-A", "lease-A", true,
+                     t0 + std::chrono::milliseconds(1)));
+
   rc::api::v2::ChatMessage chat;
   chat.set_text("Are you there?");
   assert(chat.content_case() == rc::api::v2::ChatMessage::kText);
