@@ -57,7 +57,7 @@ jobs:
         env:
           PYTHONPATH: generated
         run: /usr/bin/python3 -m unittest discover -s tests -p test_proto_contract.py -v
-      - name: Compile and run C++ legacy/v2 roundtrip
+      - name: Compile and run C++ v2 protocol smoke
         shell: bash
         run: |
           set -euo pipefail
@@ -106,7 +106,7 @@ jobs:
           g++ -std=c++17 -O0 -Wall -Wextra -I. config/configprocessor.cpp test/unit_tests/config_unit_tests.cpp -lconfig++ -lgtest_main -lgtest -pthread -o /tmp/rc_agent_config_tests
       - name: Test capability parsing and malformed lists
         run: /tmp/rc_agent_config_tests --gtest_filter='ConfigStringList.*' --gtest_color=yes
-      - name: Exercise entire legacy config test suite
+      - name: Exercise entire configuration test suite
         run: /tmp/rc_agent_config_tests --gtest_color=yes
   ros2-humble-build:
     runs-on: ubuntu-22.04
