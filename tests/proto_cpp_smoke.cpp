@@ -1,7 +1,6 @@
 #include <cassert>
 #include <chrono>
 #include <limits>
-#include "network/v2_velocity_gate.h"
 #include <string>
 
 #include "base.pb.h"
@@ -114,22 +113,23 @@ int main() {
   // A timeout must be observable once by the future ROS stop watchdog.
   // This checks the fail-closed primitive only; no remote motion is enabled.
   using Gate = rc::api::v2::VelocityGate;
-  Gate gate;
+  Gate timeout_gate;
   const auto start = Gate::Clock::time_point{} + std::chrono::seconds(10);
-  gate.grant("session-A", "lease-A", start);
-  assert(!gate.consumeExpiredMotion(start));
-  assert(gate.admit(velocity, "session-A", "lease-A", true, start));
+  velocity.mutable_linear()->set_x(0.125); // restore valid SI input after NaN rejection
+  timeout_gate.grant("session-A", "lease-A", start);
+  assert(!timeout_gate.consumeExpiredMotion(start));
+  assert(timeout_gate.admit(velocity, "session-A", "lease-A", true, start));
   const auto before_expiry = start + std::chrono::milliseconds(249);
   const auto expiry = start + std::chrono::milliseconds(250);
-  assert(!gate.expired(before_expiry));
-  assert(!gate.consumeExpiredMotion(before_expiry));
-  assert(gate.expired(expiry));
-  assert(gate.consumeExpiredMotion(expiry));
-  assert(!gate.consumeExpiredMotion(expiry)); // no duplicate stop events
-  assert(!gate.admit(velocity, "session-A", "lease-A", true, expiry));
-  gate.grant("session-B", "lease-B", expiry);
-  assert(!gate.consumeExpiredMotion(expiry)); // no motion ever admitted
-  assert(!gate.admit(velocity, "session-A", "lease-A", true, expiry));
+  assert(!timeout_gate.expired(before_expiry));
+  assert(!timeout_gate.consumeExpiredMotion(before_expiry));
+  assert(timeout_gate.expired(expiry));
+  assert(timeout_gate.consumeExpiredMotion(expiry));
+  assert(!timeout_gate.consumeExpiredMotion(expiry)); // no duplicate stop events
+  assert(!timeout_gate.admit(velocity, "session-A", "lease-A", true, expiry));
+  timeout_gate.grant("session-B", "lease-B", expiry);
+  assert(!timeout_gate.consumeExpiredMotion(expiry)); // no motion ever admitted
+  assert(!timeout_gate.admit(velocity, "session-A", "lease-A", true, expiry));
 
   return 0;
 }
