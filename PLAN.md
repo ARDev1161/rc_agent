@@ -949,3 +949,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - rc_agent [guard c75faa8c](https://github.com/ARDev1161/rc_agent/commit/c75faa8c703bd5f9c314cb62446ab379715276f6) rejects control characters as well as whitespace in locally configured ROS2 endpoints; [regression 51cf44dc](https://github.com/ARDev1161/rc_agent/commit/51cf44dc489be6bf79b9161cfe906b94494af8b0) checks escaped tab decoding through libconfig and Nav2 profile loader. Legacy fallback unchanged; shared protobuf, AmurCore C++, v2 velocity, and documentation branches unchanged.
 - New code revision `51cf44dc489be6bf79b9161cfe906b94494af8b0`: exact-head Actions outcome must be verified after workflow completion; local ROS2 Humble/Qt5 toolchains NOT RUN. Do not treat earlier green as evidence for this change.
 - P1 ACCEPTANCE PENDING, P2 IN PROGRESS under owner-authorized overlap. TurtleBot3/Gazebo and real hardware, live old/new pairing, Nav2/map/GStreamer/joystick acceptance NOT RUN. Next: inspect current feature-head ROS2 Humble/config CI and validate endpoint profiles in existing TurtleBot3/Gazebo environment. No P3 or merges.
+
+
+### P2 odometry callback concurrency checkpoint — 2026-11-13
+- rc_agent: `d81e4599990b016fdebb4730070adf0dec283234` serializes odometry sample and state-machine transitions under `status_mutex_`; `7157cf21bf5a30565b4cf80fe500ae38bb930108` adds a ROS2 MultiThreadedExecutor regression smoke test.
+- AmurCore: no production code or shared protobuf change; this PLAN entry is cross-repository handoff only.
+- Validation: GitHub source writes accepted; **ROS2 Humble colcon and latest Actions not yet verified** at handoff. Do not claim new test PASS until run completes. Existing P1 manual gates remain open; P2 remains IN PROGRESS under owner-approved overlap.
+- Next: inspect CI on rc_agent commit `7157cf21`, fix failures; verify AmurCore Qt5 and compatibility on its updated PLAN HEAD; then TurtleBot3/Gazebo Nav2/map/TF runtime acceptance. No merges to dev/master.
