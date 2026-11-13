@@ -956,3 +956,8 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - AmurCore: no production code or shared protobuf change; this PLAN entry is cross-repository handoff only.
 - Validation: GitHub source writes accepted; **ROS2 Humble colcon and latest Actions not yet verified** at handoff. Do not claim new test PASS until run completes. Existing P1 manual gates remain open; P2 remains IN PROGRESS under owner-approved overlap.
 - Next: inspect CI on rc_agent commit `7157cf21`, fix failures; verify AmurCore Qt5 and compatibility on its updated PLAN HEAD; then TurtleBot3/Gazebo Nav2/map/TF runtime acceptance. No merges to dev/master.
+
+### 2026-11-13 — P2 legacy degenerate velocity-range regression
+- rc_agent functional commit [`4512d97f`](https://github.com/ARDev1161/rc_agent/commit/4512d97f25a15abbc3a004e15c7c37a2a5799be4) adds ROS2 DDS delivery regression for finite reversed/equal input bounds; expected existing fallback [-255,255] yields linear 0.25 m/s for legacy input 255. No production code or protobuf changed.
+- At commit time CI for new test NOT VERIFIED; local ROS2 Humble NOT RUN (toolchain unavailable). Verify exact-head `ros2-humble-build` and other jobs, fix failures before treating test as passed. AmurCore production code unchanged; peer PLAN handoff only.
+- P1 ACCEPTANCE PENDING; P2 IN PROGRESS by explicit owner authorization. TurtleBot3/Gazebo, physical joystick, Nav2/map/video and live old/new acceptance remain NOT RUN. Next: CI verification and real ROS2/Gazebo endpoint/action integration; no P3 or default-branch merges.
