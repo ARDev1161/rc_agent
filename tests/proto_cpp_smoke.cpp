@@ -1,4 +1,7 @@
 #include <cassert>
+#include <chrono>
+#include <limits>
+#include "network/v2_velocity_gate.h"
 #include <string>
 
 #include "base.pb.h"
@@ -65,6 +68,35 @@ int main() {
   assert(parsed_velocity.frame_id() == "base_link");
   assert(parsed_velocity.sequence() == 42);
   assert(parsed_velocity.valid_for_ms() == 250);
+
+  // Admission is separate from serialization and defaults to deny.
+  rc::api::v2::VelocityGate gate;
+  const auto t0 = rc::api::v2::VelocityGate::Clock::time_point{};
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  gate.grant("session-A", "lease-A", t0);
+  assert(!gate.admit(velocity, "session-A", "lease-A", false, t0));
+  gate.grant("session-A", "lease-A", t0);
+  assert(!gate.admit(velocity, "session-B", "lease-A", true, t0));
+  gate.grant("session-A", "lease-A", t0);
+  assert(!gate.admit(velocity, "session-A", "lease-B", true, t0));
+  gate.grant("session-A", "lease-A", t0);
+  assert(gate.admit(velocity, "session-A", "lease-A", true, t0));
+  assert(!gate.expired(t0 + std::chrono::milliseconds(249)));
+  assert(gate.expired(t0 + std::chrono::milliseconds(250)));
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0 + std::chrono::milliseconds(250)));
+  gate.grant("session-A", "lease-A", t0);
+  assert(gate.admit(velocity, "session-A", "lease-A", true, t0));
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0)); // replay
+  gate.grant("session-A", "lease-A", t0);
+  velocity.set_valid_for_ms(0);
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  gate.grant("session-A", "lease-A", t0);
+  velocity.set_valid_for_ms(1001);
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  gate.grant("session-A", "lease-A", t0);
+  velocity.set_valid_for_ms(250);
+  velocity.mutable_linear()->set_x(std::numeric_limits<double>::quiet_NaN());
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
 
   rc::api::v2::ChatMessage chat;
   chat.set_text("Are you there?");
