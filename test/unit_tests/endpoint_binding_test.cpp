@@ -215,6 +215,62 @@ TEST_F(EndpointBindingTest, TwoProfilesKeepVelocityPublishersIsolated)
 }
 
 
+// V2 SI-unit contract at the local ROS output boundary: every linear
+// component is m/s and every angular component is rad/s. No 255 scaling,
+// deadzone, axis sign inversion, or truncation is allowed. This test exercises
+// local ROS publishing only; it does NOT authorize remote teleoperation.
+TEST_F(EndpointBindingTest, SixAxisVelocityPreservesPhysicalUnits)
+{
+    using Twist = geometry_msgs::msg::Twist;
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/si_units/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/si_units/cmd_vel")
+    });
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("si_units_velocity_observer");
+    std::vector<Twist> received;
+    auto subscription = observer->create_subscription<Twist>(
+        "/si_units/cmd_vel", 10,
+        [&](const Twist::SharedPtr msg) { received.push_back(*msg); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+
+    const auto discovery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/si_units/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_GT(node->count_subscribers("/si_units/cmd_vel"), 0u);
+
+    Twist command;
+    command.linear.x = 0.125;
+    command.linear.y = -0.075;
+    command.linear.z = 0.03125;
+    command.angular.x = -0.375;
+    command.angular.y = 0.625;
+    command.angular.z = -0.8125;
+    node->publishToBaseControlNode(command, "cmd_vel");
+    const auto delivery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.empty() && std::chrono::steady_clock::now() < delivery_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    ASSERT_EQ(received.size(), 1u);
+    const auto &actual = received.front();
+    EXPECT_DOUBLE_EQ(actual.linear.x, command.linear.x);
+    EXPECT_DOUBLE_EQ(actual.linear.y, command.linear.y);
+    EXPECT_DOUBLE_EQ(actual.linear.z, command.linear.z);
+    EXPECT_DOUBLE_EQ(actual.angular.x, command.angular.x);
+    EXPECT_DOUBLE_EQ(actual.angular.y, command.angular.y);
+    EXPECT_DOUBLE_EQ(actual.angular.z, command.angular.z);
+}
+
+
 // P2: mixed Twist/TwistStamped robot profiles must retain their own ROS
 // message types, frame metadata and payloads. This is legacy topic binding,
 // not authorization for v2 velocity commands.
