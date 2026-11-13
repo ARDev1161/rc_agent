@@ -10,6 +10,7 @@
 #include "rc_api_v2.pb.h"
 #include "robot.pb.h"
 #include "video.pb.h"
+#include "network/v2_velocity_gate.h"
 
 int main() {
   Robot::Controls legacy;
@@ -109,6 +110,26 @@ int main() {
   stage.set_parent_id("task0");
   stage.set_state(rc::api::v2::TaskStatus::ACCEPTED);
   assert(stage.state() != rc::api::v2::TaskStatus::SUCCEEDED);
+
+  // A timeout must be observable once by the future ROS stop watchdog.
+  // This checks the fail-closed primitive only; no remote motion is enabled.
+  using Gate = rc::api::v2::VelocityGate;
+  Gate gate;
+  const auto start = Gate::Clock::time_point{} + std::chrono::seconds(10);
+  gate.grant("session-A", "lease-A", start);
+  assert(!gate.consumeExpiredMotion(start));
+  assert(gate.admit(velocity, "session-A", "lease-A", true, start));
+  const auto before_expiry = start + std::chrono::milliseconds(249);
+  const auto expiry = start + std::chrono::milliseconds(250);
+  assert(!gate.expired(before_expiry));
+  assert(!gate.consumeExpiredMotion(before_expiry));
+  assert(gate.expired(expiry));
+  assert(gate.consumeExpiredMotion(expiry));
+  assert(!gate.consumeExpiredMotion(expiry)); // no duplicate stop events
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, expiry));
+  gate.grant("session-B", "lease-B", expiry);
+  assert(!gate.consumeExpiredMotion(expiry)); // no motion ever admitted
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, expiry));
 
   return 0;
 }
