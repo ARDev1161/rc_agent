@@ -132,21 +132,6 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
     cmd_vel_topic_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_topic", "/cmd_vel");
     cmd_vel_msg_type_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_msg_type", "twist");
     cmd_vel_frame_id_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_frame_id", "base_link");
-    input_min_ = this->declare_parameter<double>("basecontrol.input_min", -255.0);
-    input_max_ = this->declare_parameter<double>("basecontrol.input_max", 255.0);
-    max_linear_speed_ = this->declare_parameter<double>("basecontrol.max_linear_speed", 0.25);
-    max_angular_speed_ = this->declare_parameter<double>("basecontrol.max_angular_speed", 0.8);
-    input_deadzone_ = this->declare_parameter<double>("basecontrol.input_deadzone", 3.0);
-
-    // Reject invalid speed limits before constructing ROS publishers. NaN and
-    // infinity must never reach the legacy velocity scaling boundary.
-    if (!std::isfinite(input_min_) || !std::isfinite(input_max_) ||
-        !std::isfinite(max_linear_speed_) || !std::isfinite(max_angular_speed_) ||
-        !std::isfinite(input_deadzone_) || max_linear_speed_ < 0.0 ||
-        max_angular_speed_ < 0.0 || input_deadzone_ < 0.0) {
-        throw std::invalid_argument("Invalid basecontrol velocity scaling parameters");
-    }
-
     std::transform(cmd_vel_msg_type_.begin(), cmd_vel_msg_type_.end(), cmd_vel_msg_type_.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
@@ -163,7 +148,7 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
         cmd_vel_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(cmd_vel_topic_, 10);
     }
 
-    // Auxiliary legacy outputs are local ROS parameter bindings, never remote selectors.
+    // Auxiliary ROS outputs are local ROS parameter bindings, never remote selectors.
     const auto smoothed_topic = this->declare_parameter<std::string>(
         "basecontrol.cmd_vel_smoothed_topic", "/cmd_vel_smoothed");
     const auto nav_topic = this->declare_parameter<std::string>(
@@ -174,32 +159,22 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
     cmd_vel_smoothed_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(smoothed_topic, 10);
     cmd_vel_unsafety_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(nav_topic, 10);
 
-    last_cmd_time_ = this->now();
-    if (input_max_ <= input_min_) {
-        RCLCPP_WARN(this->get_logger(), "Invalid input range [%.3f, %.3f], fallback to [-255,255]", input_min_, input_max_);
-        input_min_ = -255.0;
-        input_max_ = 255.0;
-    }
-
-    RCLCPP_INFO(this->get_logger(), "BaseControl output: topic=%s type=%s frame_id=%s in=[%.1f..%.1f] max_lin=%.3f max_ang=%.3f deadzone=%.1f",
-                cmd_vel_topic_.c_str(), cmd_vel_msg_type_.c_str(), cmd_vel_frame_id_.c_str(),
-                input_min_, input_max_, max_linear_speed_, max_angular_speed_, input_deadzone_);
-
-    update_timer_ = this->create_wall_timer(
-        100ms,
-        std::bind(&BaseControlNode::checkBaseControlUpdates, this));
+    // No polling of legacy protobuf velocity: remote motion must enter only
+    // through the future authorized v2 TTL/session/lease/deadman path.
+    RCLCPP_INFO(this->get_logger(), "BaseControl ROS output: topic=%s type=%s frame_id=%s",
+                cmd_vel_topic_.c_str(), cmd_vel_msg_type_.c_str(), cmd_vel_frame_id_.c_str());
 }
 
 BaseControlNode::~BaseControlNode() = default;
 
 void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& twist_msg, const std::string& topic) {
-    // Reject malformed legacy commands before publishing on any allowlisted ROS output.
+    // Reject malformed velocity commands before publishing on any allowlisted ROS output.
     // This does not grant v2 velocity authority or replace its TTL/lease/watchdog gates.
     const auto &linear = twist_msg.linear;
     const auto &angular = twist_msg.angular;
     if (!std::isfinite(linear.x) || !std::isfinite(linear.y) || !std::isfinite(linear.z) ||
         !std::isfinite(angular.x) || !std::isfinite(angular.y) || !std::isfinite(angular.z)) {
-        RCLCPP_ERROR(get_logger(), "Rejecting non-finite legacy velocity command");
+        RCLCPP_ERROR(get_logger(), "Rejecting non-finite velocity command");
         return;
     }
     if (topic.compare("cmd_vel") == 0) {
@@ -248,41 +223,3 @@ void BaseControlNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg)
     }
 }
 
-void BaseControlNode::checkBaseControlUpdates() {
-    BaseVel currentVel;
-    {
-      std::lock_guard<std::mutex> lock(grpc_mutex_);
-      currentVel = protoToBaseVel(*baseControlProtoMsg_);
-    }
-
-    // Reject non-finite legacy protobuf inputs before the change detector.
-    // Otherwise NaN can poison last_cmd_* and suppress future finite commands.
-    if (!std::isfinite(currentVel.linear) || !std::isfinite(currentVel.angular)) {
-        RCLCPP_ERROR(get_logger(), "Rejecting non-finite legacy basecontrol input");
-        return;
-    }
-
-    if (std::abs(currentVel.linear - last_cmd_linear_) > kCommandVelocityEpsilon ||
-        std::abs(currentVel.angular - last_cmd_angular_) > kCommandVelocityEpsilon)
-    {
-        auto apply_deadzone = [this](double value) {
-            return (std::abs(value) < input_deadzone_) ? 0.0 : value;
-        };
-
-        const double range = input_max_ - input_min_;
-        const double linear_norm = std::clamp((apply_deadzone(currentVel.linear) - input_min_) / range * 2.0 - 1.0, -1.0, 1.0);
-        const double angular_norm = std::clamp((apply_deadzone(currentVel.angular) - input_min_) / range * 2.0 - 1.0, -1.0, 1.0);
-
-        geometry_msgs::msg::Twist twist_msg;
-        twist_msg.linear.x = linear_norm * max_linear_speed_;
-        twist_msg.angular.z = -angular_norm * max_angular_speed_;
-
-        publishToBaseControlNode(twist_msg, "cmd_vel");
-
-        last_cmd_linear_ = currentVel.linear;
-        last_cmd_angular_ = currentVel.angular;
-
-        RCLCPP_DEBUG(this->get_logger(), "Published updated cmd_vel: linear=%.3f angular=%.3f",
-                    currentVel.linear, currentVel.angular);
-    }
-}
