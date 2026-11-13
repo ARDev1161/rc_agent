@@ -53,6 +53,15 @@ public:
     bool expired(Clock::time_point now) const {
         return !active_ || !has_sequence_ || now >= deadline_;
     }
+    // Called by the eventual ROS watchdog on a monotonic timer. Returns true
+    // exactly once when an admitted motion command has timed out; the caller
+    // MUST publish a zero Twist and revoke its authenticated transport lease.
+    // No ROS publisher is owned by this transport-independent primitive.
+    bool consumeExpiredMotion(Clock::time_point now) {
+        if (!active_ || !has_sequence_ || now < deadline_) return false;
+        revoke();
+        return true;
+    }
 private:
     std::string session_, lease_;
     Clock::time_point lease_started_{}, deadline_{};
