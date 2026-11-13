@@ -280,6 +280,75 @@ TEST_F(EndpointBindingTest, NonFiniteSixAxisVelocityCannotReachRos)
 }
 
 
+// Invalid sensor feedback must not alter the last valid motion state.
+// This is a ROS2 DDS regression, not remote teleop authorization.
+TEST_F(EndpointBindingTest, NonFiniteOdometryCannotCorruptMotionState)
+{
+    using Odom = nav_msgs::msg::Odometry;
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/invalid_odom/odom")
+    });
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto publisher_node = std::make_shared<rclcpp::Node>("invalid_odom_publisher");
+    auto publisher = publisher_node->create_publisher<Odom>("/invalid_odom/odom", 10);
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(publisher_node);
+
+    const auto discovery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (publisher->get_subscription_count() == 0 &&
+           std::chrono::steady_clock::now() < discovery_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GT(publisher->get_subscription_count(), 0u);
+
+    Odom moving;
+    moving.twist.twist.linear.x = 0.5;
+    const auto moving_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->getBaseControlStatus() != BaseControlNode::ControlStatus::RUNNING &&
+           std::chrono::steady_clock::now() < moving_deadline) {
+        publisher->publish(moving);
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_EQ(node->getBaseControlStatus(), BaseControlNode::ControlStatus::RUNNING);
+
+    for (double invalid : {std::numeric_limits<double>::quiet_NaN(),
+                           std::numeric_limits<double>::infinity(),
+                           -std::numeric_limits<double>::infinity()}) {
+        for (int axis = 0; axis < 2; ++axis) {
+            Odom malformed = moving;
+            if (axis == 0) {
+                malformed.twist.twist.linear.x = invalid;
+            } else {
+                malformed.twist.twist.angular.z = invalid;
+            }
+            publisher->publish(malformed);
+            const auto settle = std::chrono::steady_clock::now() + std::chrono::milliseconds(70);
+            while (std::chrono::steady_clock::now() < settle) {
+                executor.spin_some();
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+            EXPECT_EQ(node->getBaseControlStatus(), BaseControlNode::ControlStatus::RUNNING);
+        }
+    }
+
+    Odom stopped;
+    const auto stop_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->getBaseControlStatus() != BaseControlNode::ControlStatus::STOPPED &&
+           std::chrono::steady_clock::now() < stop_deadline) {
+        publisher->publish(stopped);
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_EQ(node->getBaseControlStatus(), BaseControlNode::ControlStatus::STOPPED);
+}
+
+
 // V2 SI-unit contract at the local ROS output boundary: every linear
 // component is m/s and every angular component is rad/s. No 255 scaling,
 // deadzone, axis sign inversion, or truncation is allowed. This test exercises
