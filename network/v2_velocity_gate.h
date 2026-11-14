@@ -60,6 +60,16 @@ public:
     // exactly once when an admitted motion command has timed out; the caller
     // MUST publish a zero Twist and revoke its authenticated transport lease.
     // No ROS publisher is owned by this transport-independent primitive.
+    // Two-phase watchdog API: keep the stop latched until the ROS publisher
+    // has actually accepted the zero-velocity publish operation. A failed
+    // publish must never silently unlock a new lease.
+    bool stopPending(Clock::time_point now) {
+        if (active_ && has_sequence_ && now >= deadline_) revoke();
+        return pending_stop_;
+    }
+    void acknowledgeStopPublished() {
+        pending_stop_ = false;
+    }
     bool consumeExpiredMotion(Clock::time_point now) {
         if (active_ && has_sequence_ && now >= deadline_) revoke();
         if (!pending_stop_) return false;
