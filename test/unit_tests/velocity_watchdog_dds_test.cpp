@@ -347,3 +347,33 @@ TEST(VelocityGateContract, InvalidNonFiniteMotionRevokesWithoutUnlockingStop) {
     EXPECT_FALSE(gate.admit(invalid, "session", "lease", true, t0 + 1ms));
     EXPECT_TRUE(gate.stopPending(t0 + 2ms));
 }
+
+TEST(VelocityGateContract, WrongSessionRevokesMotionAndRequiresStopBeforeRegrant) {
+    Gate gate;
+    const auto t0 = Gate::Clock::time_point{} + 10s;
+    gate.grant("session-a", "lease-a", t0);
+    ASSERT_TRUE(gate.admit(makeVelocity(1, 500), "session-a", "lease-a", true, t0));
+    EXPECT_FALSE(gate.admit(makeVelocity(2, 500), "session-b", "lease-a", true, t0 + 1ms));
+    EXPECT_TRUE(gate.stopPending(t0 + 2ms));
+    gate.grant("session-b", "lease-b", t0 + 3ms);
+    EXPECT_FALSE(gate.admit(makeVelocity(1, 500), "session-b", "lease-b", true, t0 + 4ms));
+    gate.acknowledgeStopPublished();
+    gate.grant("session-b", "lease-b", t0 + 5ms);
+    EXPECT_TRUE(gate.admit(makeVelocity(1, 500), "session-b", "lease-b", true, t0 + 5ms));
+}
+
+TEST(VelocityGateContract, WrongLeaseAndInvalidTtlFailClosed) {
+    const auto t0 = Gate::Clock::time_point{} + 10s;
+    for (const auto invalid_ttl : {0u, 1001u}) {
+        Gate gate;
+        gate.grant("session", "lease", t0);
+        ASSERT_TRUE(gate.admit(makeVelocity(1, 500), "session", "lease", true, t0));
+        EXPECT_FALSE(gate.admit(makeVelocity(2, invalid_ttl), "session", "lease", true, t0 + 1ms));
+        EXPECT_TRUE(gate.stopPending(t0 + 2ms));
+    }
+    Gate gate;
+    gate.grant("session", "lease", t0);
+    ASSERT_TRUE(gate.admit(makeVelocity(1, 500), "session", "lease", true, t0));
+    EXPECT_FALSE(gate.admit(makeVelocity(2, 500), "session", "other-lease", true, t0 + 1ms));
+    EXPECT_TRUE(gate.stopPending(t0 + 2ms));
+}
