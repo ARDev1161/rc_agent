@@ -8,6 +8,7 @@
 #include <memory>
 #include <mutex>
 #include "robot.grpc.pb.h"
+#include "network/v2_velocity_gate.h"
 
 class BaseControlNode : public rclcpp::Node {
 public:
@@ -31,6 +32,7 @@ private:
     class ControlStateMachine;
 
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
+    void checkVelocityWatchdog();
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
 
@@ -56,6 +58,10 @@ private:
     std::mutex status_mutex_;
 
     rclcpp::Time last_cmd_time_;
+
+    // Dormant until an authenticated v2 transport explicitly grants a lease.
+    rc::api::v2::VelocityGate velocity_gate_;
+    rclcpp::TimerBase::SharedPtr velocity_watchdog_timer_;
 
 };
 
