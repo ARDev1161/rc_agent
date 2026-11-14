@@ -1,0 +1,181 @@
+name: RC API v2 contracts
+
+on:
+  push:
+    branches: [feat/rc-api-v2]
+    paths:
+      - "**/*.cpp"
+      - "**/*.py"
+      - "**/*.sh"
+      - "**/*.cc"
+      - "**/*.h"
+      - "**/*.proto"
+      - "**/*.cmake"
+      - "**/CMakeLists.txt"
+      - "**/*.ui"
+      - "**/*.yaml"
+      - "robot.cfg.in"
+      - "AmurCore.cfg.in"
+      - ".github/workflows/rc-api-v2.yml"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  protobuf-compatibility:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout this feature branch
+        uses: actions/checkout@v4
+      - name: Checkout peer contract
+        uses: actions/checkout@v4
+        with:
+          repository: ARDev1161/AmurCore
+          ref: feat/rc-api-v2
+          path: contract-peer
+          persist-credentials: false
+      - name: Check mirrored protocol files
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp network/protobuf/rc_api_v2.proto contract-peer/network/protobuf/rc_api_v2.proto
+          cmp network/protobuf/robot.proto contract-peer/network/protobuf/robot.proto
+          echo "Mirrored protobuf contracts match"
+      - name: Install protobuf compiler + C++ library
+        run: |
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y protobuf-compiler libprotobuf-dev python3-protobuf g++
+      - name: Generate all Protobuf C++ and Python types
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p generated
+          protoc --experimental_allow_proto3_optional -I network/protobuf --python_out=generated --cpp_out=generated network/protobuf/*.proto
+      - name: Run Python wire-contract tests
+        env:
+          PYTHONPATH: generated
+        run: /usr/bin/python3 -m unittest discover -s tests -p test_proto_contract.py -v
+      - name: Compile and run C++ v2 protocol smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O0 -I. -I generated generated/*.pb.cc tests/proto_cpp_smoke.cpp -lprotobuf -pthread -o generated/protocol_smoke
+          ./generated/protocol_smoke
+  grpc-client-loopback:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install gRPC and Protobuf toolchain
+        run: |
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y g++ pkg-config libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+      - name: Generate C++ RPC types
+        run: |
+          set -euo pipefail
+          mkdir -p generated
+          protoc --experimental_allow_proto3_optional -I network/protobuf --cpp_out=generated \
+            --grpc_out=generated --plugin=protoc-gen-grpc="$(command -v grpc_cpp_plugin)" network/protobuf/*.proto
+      - name: Build and execute actual rc_agent client against mock operator
+        run: |
+          set -euo pipefail
+          # *.pb.cc includes *.grpc.pb.cc: list each translation unit only once.
+          proto_sources=()
+          for file in generated/*.pb.cc; do
+            [[ "$file" == *.grpc.pb.cc ]] || proto_sources+=("$file")
+          done
+          g++ -std=c++17 -O0 -I. -Igenerated "${proto_sources[@]}" generated/*.grpc.pb.cc \
+            network/client.cpp tests/grpc_client_smoke.cpp $(pkg-config --cflags --libs grpc++ protobuf) \
+            -pthread -o generated/rc_client_transport_test
+          timeout 20s ./generated/rc_client_transport_test
+
+  config-unit-tests:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install C++ config and GTest dependencies
+        run: |
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y g++ libconfig++-dev libgtest-dev
+      - name: Compile config parser and existing unit tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O0 -Wall -Wextra -I. config/configprocessor.cpp test/unit_tests/config_unit_tests.cpp -lconfig++ -lgtest_main -lgtest -pthread -o /tmp/rc_agent_config_tests
+      - name: Test capability parsing and malformed lists
+        run: /tmp/rc_agent_config_tests --gtest_filter='ConfigStringList.*' --gtest_color=yes
+      - name: Exercise entire configuration test suite
+        run: /tmp/rc_agent_config_tests --gtest_color=yes
+  ros2-humble-build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 35
+    container:
+      image: ros:humble-ros-base
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ROS2/Nav2, C++ and system gRPC
+        shell: bash
+        run: |
+          apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
+          apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y python3-colcon-common-extensions ros-humble-nav2-msgs \
+            ros-humble-rclcpp-action ros-humble-ament-cmake-gtest ros-humble-tf2-ros \
+            ros-humble-sensor-msgs ros-humble-std-msgs ros-humble-lifecycle-msgs ros-humble-action-msgs \
+            libboost-system-dev libconfig++-dev nlohmann-json3-dev \
+            libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+      - name: Check Nav2 lifecycle source regressions
+        shell: bash
+        run: python3 -m unittest discover -s tests -p test_nav2_goal_lifecycle.py -v
+      - name: Build rc_agent with ROS2 Humble
+        shell: bash
+        run: |
+          set -eo pipefail
+          # ROS setup references optional unset shell variables; source before nounset.
+          source /opt/ros/humble/setup.bash
+          set -u
+          colcon build --base-paths . --packages-select rc_agent --cmake-args -DGRPC_FETCHCONTENT=OFF -DCMAKE_BUILD_TYPE=Debug --event-handlers console_direct+
+      - name: Test rc_agent with colcon
+        shell: bash
+        run: |
+          set -eo pipefail
+          # ROS setup references optional unset shell variables; source before nounset.
+          source /opt/ros/humble/setup.bash
+          set -u
+          colcon test --base-paths . --packages-select rc_agent --event-handlers console_direct+
+          colcon test-result --verbose
+
+
+  real-peer-grpc-loopback:
+    name: P1 real AmurCore and rc_agent gRPC pair
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout local branch
+        uses: actions/checkout@v4
+      - name: Checkout other real transport
+        uses: actions/checkout@v4
+        with:
+          repository: ARDev1161/AmurCore
+          ref: feat/rc-api-v2
+          path: peer
+          persist-credentials: false
+      - name: Install C++ gRPC toolchain
+        run: |
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y g++ pkg-config libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+      - name: Compile and execute real peers over localhost
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmp network/protobuf/rc_api_v2.proto peer/network/protobuf/rc_api_v2.proto
+          cmp network/protobuf/robot.proto peer/network/protobuf/robot.proto
+          mkdir -p generated/network/protobuf
+          protoc --experimental_allow_proto3_optional -I network/protobuf \
+            --cpp_out=generated/network/protobuf --grpc_out=generated/network/protobuf \
+            --plugin=protoc-gen-grpc="$(command -v grpc_cpp_plugin)" network/protobuf/*.proto
+          g++ -std=c++17 -O0 -DRC_AGENT_ROOT -I. -Ipeer -Igenerated -Igenerated/network/protobuf \
+            generated/network/protobuf/*.pb.cc \
+            peer/network/server.cpp network/client.cpp peer/tests/real_peer_smoke.cpp \
+            $(pkg-config --cflags --libs grpc++ protobuf) -pthread -o generated/real_peer_smoke
+          timeout 15s ./generated/real_peer_smoke

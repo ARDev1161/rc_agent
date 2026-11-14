@@ -1,4 +1,5 @@
 #include "map_node.h"
+#include <stdexcept>
 #ifdef HAVE_NLOHMANN_JSON
 #include <nlohmann/json.hpp>
 #endif
@@ -14,6 +15,14 @@ MapNode::MapNode(std::shared_ptr<GetMapResponse> mapPtr,
       tf_buffer_(this->get_clock()), // Initialize tf_buffer_ with node's clock
       tf_listener_(tf_buffer_) // Initialize tf_listener_ using tf_buffer_
 {
+    map_tf_frame_ = this->declare_parameter<std::string>("map.tf_map_frame", "map");
+    robot_tf_frame_ = this->declare_parameter<std::string>("map.tf_robot_frame", "base_link");
+    if (map_tf_frame_.empty() || robot_tf_frame_.empty()) {
+        throw std::invalid_argument("MapNode TF2 frame names must not be empty");
+    }
+    if (mapTopicName.empty() || zonesTopicName.empty()) {
+        throw std::invalid_argument("MapNode topic names must not be empty");
+    }
     // Create a subscription for nav_msgs::msg::OccupancyGrid messages
     map_sub_ = this->create_subscription<nav_msgs::msg::OccupancyGrid>(
         mapTopicName,
@@ -41,7 +50,7 @@ void MapNode::map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
 {
     RCLCPP_DEBUG(this->get_logger(), "MapHandler received new map data");
     {
-        std::lock_guard<std::mutex> lock(grpc_mutex_);
+        std::lock_guard<std::mutex> lock(*grpc_mutex_);
         fillOccupancyGridProtobuf(*proto_map_->mutable_map(), msg);
         proto_map_->set_map_seq(++map_seq_);
     }
@@ -49,7 +58,7 @@ void MapNode::map_callback(const nav_msgs::msg::OccupancyGrid::SharedPtr msg)
 
 void MapNode::zones_callback(const std_msgs::msg::String::SharedPtr msg)
 {
-    std::lock_guard<std::mutex> lock(grpc_mutex_);
+    std::lock_guard<std::mutex> lock(*grpc_mutex_);
     if (!msg) {
         proto_map_->clear_zone_map();
         proto_map_->set_zone_seq(++zone_seq_);
@@ -168,7 +177,11 @@ void MapNode::fillOccupancyGridProtobuf(OccupancyGrid &proto_map, const nav_msgs
 }
 
 void MapNode::tfUpdateCallback() {
-    getRobotPose(*proto_map_->mutable_robotpose(), "map", "base_link");
+    Pose pose;
+    if (getRobotPose(pose, map_tf_frame_, robot_tf_frame_)) {
+        std::lock_guard<std::mutex> lock(*grpc_mutex_);
+        proto_map_->mutable_robotpose()->CopyFrom(pose);
+    }
 }
 
 bool MapNode::getRobotPose(Pose &robotPose, std::string mapTF, std::string robotTF)

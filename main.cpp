@@ -12,10 +12,13 @@
 #include <fstream>
 #include <cstring>
 #include <unordered_set>
+#include <stdexcept>
 
 #include "config/configprocessor.h"
+#include "config/endpoint_bindings.h"
 #include "network/networkcontroller.h"
 #include "modules/battery/battery_state_node.h"
+#include "modules/video/stream_pipeline_receiver.h"
 #include "modules/map/map_node.h"
 #include "modules/basecontrol/basecontrol.h"
 #include "modules/nav2/robot_navigator.h"
@@ -62,6 +65,85 @@ std::string resolveVideoPipeline()
   return loadVideoPipelineFromConfig("robot.cfg");
 }
 
+// Advertise only semantic capabilities. ROS2/gRPC endpoints remain trusted local config.
+void configureRobotInfo(Sensors &sensors, const std::string &config_path)
+{
+  ConfigProcessor config(config_path);
+  std::string robot_id;
+  if (config.searchString("Amur.API.robot_id", robot_id) != EXIT_SUCCESS ||
+      robot_id.empty()) {
+    RCLCPP_INFO(rclcpp::get_logger("rc_agent"),
+                "No Amur.API.robot_id: v2 announcement disabled (legacy mode)");
+    return;
+  }
+
+  std::vector<std::string> capabilities;
+  if (config.searchStringList("Amur.API.capabilities", capabilities) != EXIT_SUCCESS ||
+      capabilities.empty()) {
+    RCLCPP_ERROR(rclcpp::get_logger("rc_agent"),
+                 "Robot %s: Amur.API.capabilities must be a nonempty string list",
+                 robot_id.c_str());
+    return;
+  }
+
+  std::unordered_set<std::string> seen;
+  bool manual_velocity = false;
+  for (const auto &id : capabilities) {
+    if (id.empty() || !seen.insert(id).second) {
+      RCLCPP_ERROR(rclcpp::get_logger("rc_agent"),
+                   "Robot %s: empty/duplicate capability identifier", robot_id.c_str());
+      return;
+    }
+    manual_velocity |= (id == "manual.velocity");
+  }
+
+  std::vector<std::string> axes;
+  if (manual_velocity) {
+    if (config.searchStringList("Amur.API.velocity_axes", axes) != EXIT_SUCCESS ||
+        axes.empty()) {
+      RCLCPP_ERROR(rclcpp::get_logger("rc_agent"),
+                   "Robot %s: manual.velocity requires supported axes", robot_id.c_str());
+      return;
+    }
+    const std::unordered_set<std::string> allowed = {
+      "linear.x", "linear.y", "linear.z", "angular.x", "angular.y", "angular.z"
+    };
+    std::unordered_set<std::string> axis_seen;
+    for (const auto &axis : axes) {
+      if (!allowed.count(axis) || !axis_seen.insert(axis).second) {
+        RCLCPP_ERROR(rclcpp::get_logger("rc_agent"),
+                     "Robot %s: invalid or duplicate axis '%s'",
+                     robot_id.c_str(), axis.c_str());
+        return;
+      }
+    }
+  }
+
+  std::string name;
+  if (config.searchString("Amur.API.display_name", name) != EXIT_SUCCESS ||
+      name.empty()) {
+    name = robot_id;
+  }
+
+  auto *info = sensors.mutable_robot_info();
+  info->set_robot_id(robot_id);
+  info->set_display_name(name);
+  info->set_api_major(2);
+  info->set_api_minor(0);
+  for (const auto &id : capabilities) {
+    auto *capability = info->add_capabilities();
+    capability->set_id(id);
+    if (id == "manual.velocity") {
+      for (const auto &axis : axes) {
+        capability->add_velocity_axes(axis);
+      }
+    }
+  }
+  RCLCPP_INFO(rclcpp::get_logger("rc_agent"),
+              "Announcing robot %s (%zu capabilities), RC API v2",
+              robot_id.c_str(), capabilities.size());
+}
+
 }  // namespace
 
 /**
@@ -106,41 +188,6 @@ private:
   rclcpp::TimerBase::SharedPtr publish_timer_;                        ///< Timer for periodic publishing.
 };
 
-class StreamPipelineReceiver : public rclcpp::Node {
-public:
-  StreamPipelineReceiver(std::shared_ptr<Sensors> sensors)
-  : Node("stream_pipeline_receiver"),
-    sensors_(std::move(sensors))
-  {
-    pipeline_topic_ = declare_parameter<std::string>("pipeline_topic", "/gst/pipeline");
-    auto qos = rclcpp::QoS(1).transient_local().reliable();
-    sub_ = this->create_subscription<std_msgs::msg::String>(
-      pipeline_topic_,
-      qos,
-      std::bind(&StreamPipelineReceiver::onPipeline, this, std::placeholders::_1));
-  }
-
-private:
-  void onPipeline(const std_msgs::msg::String::SharedPtr msg)
-  {
-    if (!sensors_ || msg->data.empty()) {
-      return;
-    }
-
-    if (msg->data == last_pipeline_) {
-      return;
-    }
-
-    last_pipeline_ = msg->data;
-    sensors_->mutable_video_stream()->set_pipeline(last_pipeline_);
-    RCLCPP_INFO(this->get_logger(), "Updated video pipeline from %s", pipeline_topic_.c_str());
-  }
-
-  std::shared_ptr<Sensors> sensors_;
-  std::string pipeline_topic_;
-  std::string last_pipeline_;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr sub_;
-};
 
 class VideoSourceRelay : public rclcpp::Node {
 public:
@@ -271,7 +318,7 @@ private:
                 reason);
   }
 
-  static sensor_msgs::msg::Image convertAndScale(const sensor_msgs::msg::Image &msg)
+  sensor_msgs::msg::Image convertAndScale(const sensor_msgs::msg::Image &msg)
   {
     const bool is_bgr = msg.encoding == sensor_msgs::image_encodings::BGR8;
     const bool is_rgba = msg.encoding == sensor_msgs::image_encodings::RGBA8;
@@ -581,7 +628,7 @@ private:
 
     std::unique_lock<std::mutex> lock;
     if (client) {
-      lock = std::unique_lock<std::mutex>(client->getMutex());
+      lock = std::unique_lock<std::mutex>(*client->getMutex());
     }
     auto status = sensors_->mutable_video_stream()->mutable_status();
     status->clear_sources();
@@ -610,7 +657,7 @@ private:
     bool has_request = false;
     {
       if (client) {
-        std::unique_lock<std::mutex> lock(client->getMutex());
+        std::unique_lock<std::mutex> lock(*client->getMutex());
         if (controls_->has_video_config()) {
           requested = controls_->video_config();
           has_request = true;
@@ -771,6 +818,9 @@ int main(int argc, char **argv)
   // Create shared pointers for Controls, Sensors, and Map data
   auto controlsPtr = std::make_shared<Controls>();
   auto sensorsPtr = std::make_shared<Sensors>();
+  const std::string robot_config_path =
+    paramNode->declare_parameter<std::string>("robot_config_path", "robot.cfg");
+  configureRobotInfo(*sensorsPtr, robot_config_path);
   auto mapPtr = std::make_shared<GetMapResponse>();
   std::string video_pipeline = param_pipeline;
   if (video_pipeline.empty()) {
@@ -790,7 +840,6 @@ int main(int argc, char **argv)
 
   // Create an AddressSender node that publishes the last connected IP address
   auto addressSenderNode = std::make_shared<AddressSender>(network);
-  auto pipelineReceiverNode = std::make_shared<StreamPipelineReceiver>(sensorsPtr);
   auto relayNode = std::make_shared<VideoSourceRelay>("/rc_agent/video_source");
   auto videoControlNode = std::make_shared<VideoControlNode>(
     controlsPtr, sensorsPtr, network, relayNode);
@@ -809,18 +858,63 @@ int main(int argc, char **argv)
     std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Wait 10 milliseconds
   }
 
-  // Initialize additional nodes (commented out nodes can be enabled if needed).
-//   auto batteryStateNode = std::make_shared<BatteryStateNode>(sensorsPtr->mutable_batterystate(), "battery_state");
-  auto mapNode = std::make_shared<MapNode>(mapPtr, "/map", "/mapannotator/rc_agent_zones",
-                                           network->getClientInstance()->getMapMutex());
+  // ROS video telemetry and gRPC snapshots must use one shared Sensors mutex.
+  auto pipelineReceiverNode = std::make_shared<StreamPipelineReceiver>(
+    sensorsPtr, network->getClientInstance()->getMutex());
+
+  // Battery telemetry is optional. A missing/empty libconfig topic means no
+  // subscriber and no fabricated battery snapshot in the legacy Sensors wire.
+  std::shared_ptr<BatteryStateNode> batteryStateNode;
+  std::string battery_topic;
+  ConfigProcessor battery_config(robot_config_path);
+  if (battery_config.searchString("Amur.API.battery_topic", battery_topic) == EXIT_SUCCESS &&
+      !battery_topic.empty()) {
+    batteryStateNode = std::make_shared<BatteryStateNode>(
+      sensorsPtr, network->getClientInstance()->getMutex(), battery_topic);
+  }
+  // Robot-specific ROS2 bindings live in libconfig; ROS2 parameters remain
+  // independently usable for runtime tuning. The defaults preserve dev wiring.
+  ConfigProcessor endpoint_config(robot_config_path);
+  const auto map_profile = loadMapEndpointProfile(endpoint_config);
+  // Resolve all basecontrol endpoints from the same trusted libconfig
+  // profile, including the two legacy auxiliary outputs.
+  const auto base_profile = loadBaseControlEndpointProfile(endpoint_config);
+  rclcpp::NodeOptions base_options;
+  base_options.parameter_overrides({
+    rclcpp::Parameter("basecontrol.odom_topic", base_profile.odom_topic),
+    rclcpp::Parameter("basecontrol.cmd_vel_topic", base_profile.cmd_vel_topic),
+    rclcpp::Parameter("basecontrol.cmd_vel_msg_type", base_profile.cmd_vel_type),
+    rclcpp::Parameter("basecontrol.cmd_vel_frame_id", base_profile.cmd_vel_frame),
+    rclcpp::Parameter("basecontrol.cmd_vel_smoothed_topic", base_profile.cmd_vel_smoothed_topic),
+    rclcpp::Parameter("basecontrol.cmd_vel_nav_topic", base_profile.cmd_vel_nav_topic)
+  });
+  rclcpp::NodeOptions map_options;
+  map_options.parameter_overrides({
+    rclcpp::Parameter("map.tf_map_frame", map_profile.tf_map_frame),
+    rclcpp::Parameter("map.tf_robot_frame", map_profile.tf_robot_frame)
+  });
+  auto mapNode = std::make_shared<MapNode>(mapPtr, map_profile.map_topic,
+                                           map_profile.zones_topic,
+                                           network->getClientInstance()->getMapMutex(), map_options);
   auto baseControlNode = std::make_shared<BaseControlNode>(
     controlsPtr->mutable_basecontrol(),
-    network->getClientInstance()->getMutex());
+    *network->getClientInstance()->getMutex(), base_options);
+  // Read the same trusted Nav2 profile used by the libconfig GTests.
+  // These are gateway-local bindings, not remote-selected action names.
+  const auto nav_profile = loadNav2EndpointProfile(endpoint_config);
+  rclcpp::NodeOptions nav_options;
+  nav_options.parameter_overrides({
+    rclcpp::Parameter("nav2.navigate_to_pose_action", nav_profile.navigate_to_pose_action),
+    rclcpp::Parameter("nav2.navigate_through_poses_action", nav_profile.navigate_through_poses_action),
+    rclcpp::Parameter("nav2.follow_waypoints_action", nav_profile.follow_waypoints_action),
+    rclcpp::Parameter("nav2.spin_action", nav_profile.spin_action),
+    rclcpp::Parameter("nav2.initial_pose_topic", nav_profile.initial_pose_topic)
+  });
   auto navigatorNode = std::make_shared<RobotNavigator>(
     "basic_navigator_node",
     std::shared_ptr<NavCommandRequest>(controlsPtr->mutable_navcontrol(), [](NavCommandRequest*){}),
     std::shared_ptr<NavCommandResponse>(sensorsPtr->mutable_navcontrolstatus(), [](NavCommandResponse*){}),
-    network->getClientInstance()->getMutex()
+    *network->getClientInstance()->getMutex(), nav_options
   );
 
   // Create a MultiThreadedExecutor
@@ -831,7 +925,9 @@ int main(int argc, char **argv)
   executor.add_node(pipelineReceiverNode);
   executor.add_node(relayNode);
   executor.add_node(videoControlNode);
-//   executor.add_node(batteryStateNode);
+  if (batteryStateNode) {
+    executor.add_node(batteryStateNode);
+  }
   executor.add_node(mapNode);
   executor.add_node(baseControlNode);
   executor.add_node(navigatorNode);

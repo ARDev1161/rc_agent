@@ -8,15 +8,9 @@
 #include <memory>
 #include <mutex>
 #include "robot.grpc.pb.h"
+#include "../../network/v2_velocity_gate.h"
 
-struct BaseVel {
-    double linear;
-    double angular;
-};
-
-static BaseVel protoToBaseVel(const Base::BaseControl& base_control_msg) {
-    return {base_control_msg.linearvelocity(), base_control_msg.angularvelocity()};
-}
+class VelocityWatchdogTestPeer;
 
 class BaseControlNode : public rclcpp::Node {
 public:
@@ -27,7 +21,8 @@ public:
         READY_OK
     };
 
-    explicit BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &grpcMutex);
+    explicit BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &grpcMutex,
+                             const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
     ~BaseControlNode();
 
     void publishToBaseControlNode(const geometry_msgs::msg::Twist& twist_msg,
@@ -36,10 +31,11 @@ public:
     ControlStatus getBaseControlStatus();
 
 private:
+    friend class VelocityWatchdogTestPeer; // DDS fixture, not a production grant API
     class ControlStateMachine;
 
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
-    void checkBaseControlUpdates();
+    void checkVelocityWatchdog();
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
 
@@ -48,20 +44,11 @@ private:
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_smoothed_pub_;
     rclcpp::Publisher<geometry_msgs::msg::Twist>::SharedPtr cmd_vel_unsafety_pub_;
 
-    rclcpp::TimerBase::SharedPtr update_timer_;
 
     std::string cmd_vel_topic_;
     std::string cmd_vel_msg_type_;
     std::string cmd_vel_frame_id_;
 
-    double input_min_ = -255.0;
-    double input_max_ = 255.0;
-    double max_linear_speed_ = 0.25;
-    double max_angular_speed_ = 0.8;
-    double input_deadzone_ = 3.0;
-
-    double last_cmd_linear_ = 0.0;
-    double last_cmd_angular_ = 0.0;
     double actual_linear_vel_ = 0.0;
     double actual_angular_vel_ = 0.0;
 
@@ -74,6 +61,11 @@ private:
     std::mutex status_mutex_;
 
     rclcpp::Time last_cmd_time_;
+
+    // Dormant until an authenticated v2 transport explicitly grants a lease.
+    rc::api::v2::VelocityGate velocity_gate_;
+    rclcpp::TimerBase::SharedPtr velocity_watchdog_timer_;
+
 };
 
 #endif // BASE_CONTROL_HPP

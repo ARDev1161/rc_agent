@@ -1,0 +1,237 @@
+#include <cassert>
+#include <chrono>
+#include <limits>
+#include <string>
+
+#include "base.pb.h"
+#include "map.pb.h"
+#include "navigation.pb.h"
+#include "rc_api_v2.pb.h"
+#include "robot.pb.h"
+#include "video.pb.h"
+#include "network/v2_velocity_gate.h"
+
+int main() {
+  Robot::Controls legacy;
+  legacy.mutable_basecontrol()->set_linearvelocity(48.0);
+  legacy.mutable_basecontrol()->set_angularvelocity(-17.0);
+  legacy.mutable_navcontrol()->mutable_go_to_pose()->mutable_pose()->set_x(2.0);
+  legacy.mutable_video_config()->set_use_widget_size(true);
+
+  std::string wire;
+  assert(legacy.SerializeToString(&wire));
+  Robot::Controls controls;
+  assert(controls.ParseFromString(wire));
+  assert(controls.basecontrol().linearvelocity() == 48.0);
+  assert(controls.navcontrol().has_go_to_pose());
+  assert(controls.video_config().use_widget_size());
+
+  Robot::Sensors sensors;
+  sensors.mutable_robot_info()->set_robot_id("robot-001");
+  sensors.mutable_robot_info()->set_api_major(2);
+  auto *capability = sensors.mutable_robot_info()->add_capabilities();
+  capability->set_id("manual.velocity");
+  capability->add_velocity_axes("linear.x");
+  capability->add_velocity_axes("angular.z");
+  sensors.mutable_navcontrolstatus()->set_status(Navigation::IN_PROGRESS);
+  sensors.mutable_video_stream()->set_pipeline("udpsrc port=1234");
+
+  assert(sensors.SerializeToString(&wire));
+  Robot::Sensors restored;
+  assert(restored.ParseFromString(wire));
+  assert(restored.has_robot_info());
+  assert(restored.robot_info().robot_id() == "robot-001");
+  assert(restored.robot_info().capabilities(0).velocity_axes_size() == 2);
+  assert(restored.navcontrolstatus().status() == Navigation::IN_PROGRESS);
+  assert(restored.video_stream().pipeline() == "udpsrc port=1234");
+
+  // v2 velocity is expressed in SI units, never legacy joystick ticks.
+  rc::api::v2::Velocity velocity;
+  velocity.mutable_linear()->set_x(0.125);
+  velocity.mutable_linear()->set_y(-0.0625);
+  velocity.mutable_linear()->set_z(0.03125);
+  velocity.mutable_angular()->set_x(-0.375);
+  velocity.mutable_angular()->set_y(0.625);
+  velocity.mutable_angular()->set_z(-0.8125);
+  velocity.set_frame_id("base_link");
+  velocity.set_sequence(42);
+  velocity.set_valid_for_ms(250);
+  assert(velocity.SerializeToString(&wire));
+  rc::api::v2::Velocity parsed_velocity;
+  assert(parsed_velocity.ParseFromString(wire));
+  assert(parsed_velocity.linear().x() == 0.125);
+  assert(parsed_velocity.linear().y() == -0.0625);
+  assert(parsed_velocity.linear().z() == 0.03125);
+  assert(parsed_velocity.angular().x() == -0.375);
+  assert(parsed_velocity.angular().y() == 0.625);
+  assert(parsed_velocity.angular().z() == -0.8125);
+  assert(parsed_velocity.frame_id() == "base_link");
+  assert(parsed_velocity.sequence() == 42);
+  assert(parsed_velocity.valid_for_ms() == 250);
+
+  // Admission is separate from serialization and defaults to deny.
+  rc::api::v2::VelocityGate gate;
+  const auto t0 = rc::api::v2::VelocityGate::Clock::time_point{};
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
+  gate.grant("session-A", "lease-A", t0);
+  assert(!gate.admit(velocity, "session-A", "lease-A", false, t0));
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
+  gate.grant("session-A", "lease-A", t0);
+  assert(!gate.admit(velocity, "session-B", "lease-A", true, t0));
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
+  gate.grant("session-A", "lease-A", t0);
+  assert(!gate.admit(velocity, "session-A", "lease-B", true, t0));
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
+  gate.grant("session-A", "lease-A", t0);
+  assert(gate.admit(velocity, "session-A", "lease-A", true, t0));
+  assert(!gate.expired(t0 + std::chrono::milliseconds(249)));
+  assert(gate.expired(t0 + std::chrono::milliseconds(250)));
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0 + std::chrono::milliseconds(250)));
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
+  gate.grant("session-A", "lease-A", t0);
+  assert(gate.admit(velocity, "session-A", "lease-A", true, t0));
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0)); // replay
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
+  gate.grant("session-A", "lease-A", t0);
+  velocity.set_valid_for_ms(0);
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
+  gate.grant("session-A", "lease-A", t0);
+  velocity.set_valid_for_ms(1001);
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
+  gate.grant("session-A", "lease-A", t0);
+  velocity.set_valid_for_ms(250);
+  velocity.mutable_linear()->set_x(std::numeric_limits<double>::quiet_NaN());
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+
+  // Every non-finite component must fail closed independently, not only linear.x.
+  const double bad_values[] = {
+      std::numeric_limits<double>::quiet_NaN(),
+      std::numeric_limits<double>::infinity(),
+      -std::numeric_limits<double>::infinity()};
+  for (int axis = 0; axis < 6; ++axis) {
+    for (double bad : bad_values) {
+      rc::api::v2::Velocity candidate = velocity;
+      candidate.mutable_linear()->set_x(0.125);
+      auto* component = axis < 3 ? candidate.mutable_linear() : candidate.mutable_angular();
+      switch (axis % 3) {
+        case 0: component->set_x(bad); break;
+        case 1: component->set_y(bad); break;
+        default: component->set_z(bad); break;
+      }
+      gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
+      gate.grant("session-A", "lease-A", t0);
+      assert(!gate.admit(candidate, "session-A", "lease-A", true, t0));
+      assert(gate.expired(t0));
+      assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+    }
+  }
+  // An invalid frame or time rollback must not preserve the prior lease.
+  velocity.mutable_linear()->set_x(0.125);
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
+  gate.grant("session-A", "lease-A", t0);
+  velocity.clear_frame_id();
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  velocity.set_frame_id("base_link");
+  gate.acknowledgeStopPublished();
+  gate.grant("session-A", "lease-A", t0 + std::chrono::milliseconds(1));
+  assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  assert(!gate.admit(velocity, "session-A", "lease-A", true,
+                     t0 + std::chrono::milliseconds(1)));
+
+  // A rejected command after motion was admitted must request exactly one
+  // stop, and must prevent a new lease until the watchdog acknowledges it.
+  rc::api::v2::VelocityGate rejected_gate;
+  rc::api::v2::Velocity valid_velocity = velocity;
+  valid_velocity.set_sequence(43);
+  rejected_gate.grant("session-A", "lease-A", t0);
+  assert(rejected_gate.admit(valid_velocity, "session-A", "lease-A", true, t0));
+  assert(!rejected_gate.admit(valid_velocity, "session-A", "lease-A", false, t0));
+  rejected_gate.grant("session-B", "lease-B", t0);
+  assert(!rejected_gate.admit(valid_velocity, "session-B", "lease-B", true, t0));
+  assert(rejected_gate.stopPending(t0));
+  assert(rejected_gate.stopPending(t0)); // stop remains pending until ROS publish ack
+  rejected_gate.acknowledgeStopPublished();
+  assert(!rejected_gate.stopPending(t0));
+  rejected_gate.grant("session-B", "lease-B", t0);
+  assert(rejected_gate.admit(valid_velocity, "session-B", "lease-B", true, t0));
+  rejected_gate.revoke();
+  assert(rejected_gate.stopPending(t0));
+  rejected_gate.acknowledgeStopPublished();
+
+  // A failed ROS stop publication must not release the safety barrier.
+  rc::api::v2::VelocityGate ack_gate;
+  ack_gate.grant("session-A", "lease-A", t0);
+  assert(ack_gate.admit(valid_velocity, "session-A", "lease-A", true, t0));
+  const auto ack_deadline = t0 + std::chrono::milliseconds(250);
+  assert(!ack_gate.stopPending(t0 + std::chrono::milliseconds(249)));
+  assert(ack_gate.stopPending(ack_deadline));
+  assert(ack_gate.stopPending(ack_deadline)); // retry after publisher failure
+  ack_gate.grant("session-B", "lease-B", ack_deadline);
+  assert(!ack_gate.admit(valid_velocity, "session-B", "lease-B", true, ack_deadline));
+  ack_gate.acknowledgeStopPublished(); // only after zero Twist is published
+  assert(!ack_gate.stopPending(ack_deadline));
+  ack_gate.grant("session-B", "lease-B", ack_deadline);
+  assert(ack_gate.admit(valid_velocity, "session-B", "lease-B", true, ack_deadline));
+
+  // An admitted command cannot be renewed with a timestamp older than the
+  // previous admission, even if it remains after the lease start.
+  rc::api::v2::VelocityGate rollback_gate;
+  const auto rollback_start = t0 + std::chrono::seconds(1);
+  rollback_gate.grant("session-A", "lease-A", rollback_start);
+  valid_velocity.set_sequence(44);
+  assert(rollback_gate.admit(valid_velocity, "session-A", "lease-A", true,
+                             rollback_start + std::chrono::milliseconds(100)));
+  valid_velocity.set_sequence(45);
+  assert(!rollback_gate.admit(valid_velocity, "session-A", "lease-A", true,
+                              rollback_start + std::chrono::milliseconds(99)));
+  assert(rollback_gate.stopPending(rollback_start + std::chrono::milliseconds(100)));
+  rollback_gate.grant("session-B", "lease-B", rollback_start + std::chrono::milliseconds(100));
+  assert(!rollback_gate.admit(valid_velocity, "session-B", "lease-B", true,
+                              rollback_start + std::chrono::milliseconds(100)));
+  rollback_gate.acknowledgeStopPublished();
+  rollback_gate.grant("session-B", "lease-B", rollback_start + std::chrono::milliseconds(100));
+  assert(rollback_gate.admit(valid_velocity, "session-B", "lease-B", true,
+                             rollback_start + std::chrono::milliseconds(100)));
+
+  rc::api::v2::ChatMessage chat;
+  chat.set_text("Are you there?");
+  assert(chat.content_case() == rc::api::v2::ChatMessage::kText);
+  chat.set_audio(std::string(8, '\0'));
+  assert(chat.content_case() == rc::api::v2::ChatMessage::kAudio);
+
+  rc::api::v2::TaskStatus stage;
+  stage.set_task_id("task1");
+  stage.set_parent_id("task0");
+  stage.set_state(rc::api::v2::TaskStatus::ACCEPTED);
+  assert(stage.state() != rc::api::v2::TaskStatus::SUCCEEDED);
+
+  // A timeout must remain observable until ROS zero publication is acknowledged.
+  // This checks the fail-closed primitive only; no remote motion is enabled.
+  using Gate = rc::api::v2::VelocityGate;
+  Gate timeout_gate;
+  const auto start = Gate::Clock::time_point{} + std::chrono::seconds(10);
+  velocity.mutable_linear()->set_x(0.125); // restore valid SI input after NaN rejection
+  timeout_gate.grant("session-A", "lease-A", start);
+  assert(!timeout_gate.stopPending(start));
+  assert(timeout_gate.admit(velocity, "session-A", "lease-A", true, start));
+  const auto before_expiry = start + std::chrono::milliseconds(249);
+  const auto expiry = start + std::chrono::milliseconds(250);
+  assert(!timeout_gate.expired(before_expiry));
+  assert(!timeout_gate.stopPending(before_expiry));
+  assert(timeout_gate.expired(expiry));
+  assert(timeout_gate.stopPending(expiry));
+  assert(timeout_gate.stopPending(expiry)); // retry until zero is published
+  timeout_gate.grant("session-B", "lease-B", expiry);
+  assert(!timeout_gate.admit(velocity, "session-B", "lease-B", true, expiry));
+  timeout_gate.acknowledgeStopPublished(); // test simulates successful ROS publish
+  assert(!timeout_gate.stopPending(expiry));
+  assert(!timeout_gate.admit(velocity, "session-A", "lease-A", true, expiry));
+  timeout_gate.grant("session-B", "lease-B", expiry);
+  assert(!timeout_gate.stopPending(expiry)); // no motion ever admitted
+  assert(!timeout_gate.admit(velocity, "session-A", "lease-A", true, expiry));
+
+  return 0;
+}

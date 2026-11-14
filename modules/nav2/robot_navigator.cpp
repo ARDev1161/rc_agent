@@ -1,12 +1,14 @@
 #include "robot_navigator_handler.h"
 #include "robot_navigator.h"
+#include <stdexcept>
 
 
 RobotNavigator::RobotNavigator(const std::string &node_name,
                                std::shared_ptr<NavCommandRequest> nav_cmd_req,
                                std::shared_ptr<NavCommandResponse> nav_cmd_resp,
-                               std::mutex &grpc_mutex)
-  : rclcpp::Node(node_name),
+                               std::mutex &grpc_mutex,
+                               const rclcpp::NodeOptions &options)
+  : rclcpp::Node(node_name, options),
     last_feedback_time_(this->now()),
     task_completed_(false),
     result_code_(rclcpp_action::ResultCode::UNKNOWN),
@@ -14,38 +16,33 @@ RobotNavigator::RobotNavigator(const std::string &node_name,
     nav_cmd_resp_(nav_cmd_resp),
     grpc_mutex_(grpc_mutex)
 {
-    // Initialize action clients
-    navigate_to_pose_client_ = rclcpp_action::create_client<NavigateToPose>(this, "navigate_to_pose");
-    navigate_through_poses_client_ = rclcpp_action::create_client<NavigateThroughPoses>(this, "navigate_through_poses");
-    follow_waypoints_client_ = rclcpp_action::create_client<FollowWaypoints>(this, "follow_waypoints");
-    spin_client_ = rclcpp_action::create_client<Spin>(this, "spin");
-
-    // Initialize publisher for initial pose
-    initial_pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>("initialpose", 10);
-
-    // Check availability of action servers
-    if (!navigate_to_pose_client_->wait_for_action_server(std::chrono::seconds(10))) {
-        RCLCPP_ERROR(get_logger(), "navigate_to_pose action server not available!");
-        rclcpp::shutdown();
-        return;
-    }
-    if (!navigate_through_poses_client_->wait_for_action_server(std::chrono::seconds(10))) {
-        RCLCPP_ERROR(get_logger(), "navigate_through_poses action server not available!");
-        rclcpp::shutdown();
-        return;
-    }
-    if (!follow_waypoints_client_->wait_for_action_server(std::chrono::seconds(10))) {
-        RCLCPP_ERROR(get_logger(), "follow_waypoints action server not available!");
-        rclcpp::shutdown();
-        return;
-    }
-    if (!spin_client_->wait_for_action_server(std::chrono::seconds(10))) {
-        RCLCPP_ERROR(get_logger(), "spin action server not available!");
-        rclcpp::shutdown();
-        return;
+    // Only locally configured endpoint names are accepted; defaults retain dev wiring.
+    const auto navigate_to_pose = declare_parameter<std::string>(
+        "nav2.navigate_to_pose_action", "navigate_to_pose");
+    const auto navigate_through_poses = declare_parameter<std::string>(
+        "nav2.navigate_through_poses_action", "navigate_through_poses");
+    const auto follow_waypoints = declare_parameter<std::string>(
+        "nav2.follow_waypoints_action", "follow_waypoints");
+    const auto spin = declare_parameter<std::string>("nav2.spin_action", "spin");
+    const auto initial_pose = declare_parameter<std::string>(
+        "nav2.initial_pose_topic", "initialpose");
+    if (navigate_to_pose.empty() || navigate_through_poses.empty() ||
+        follow_waypoints.empty() || spin.empty() || initial_pose.empty()) {
+        throw std::invalid_argument("Nav2 action and initial pose endpoints must not be empty");
     }
 
-    RCLCPP_INFO(get_logger(), "Connected to action server.");
+    navigate_to_pose_client_ = rclcpp_action::create_client<NavigateToPose>(this, navigate_to_pose);
+    navigate_through_poses_client_ = rclcpp_action::create_client<NavigateThroughPoses>(
+        this, navigate_through_poses);
+    follow_waypoints_client_ = rclcpp_action::create_client<FollowWaypoints>(this, follow_waypoints);
+    spin_client_ = rclcpp_action::create_client<Spin>(this, spin);
+    initial_pose_pub_ = this->create_publisher<geometry_msgs::msg::PoseWithCovarianceStamped>(
+        initial_pose, 10);
+
+    // Nav2 may start after rc_agent. Do not block startup for 40 seconds or
+    // shut down the entire ROS context when one optional action is absent.
+    // Client availability is checked when a command is actually submitted.
+    RCLCPP_INFO(get_logger(), "Nav2 clients configured; action servers may connect later.");
 
     // Create a timer to check for new navigation commands every 100 ms
     command_timer_ = this->create_wall_timer(
@@ -143,24 +140,28 @@ void RobotNavigator::spin(double target_yaw, double time_allowance) {
 }
 
 void RobotNavigator::cancelTask() {
+    // A completed action has no current goal to cancel. In particular, a
+    // second cancel after SUCCEEDED/CANCELED must not reach the backend.
     {
         std::lock_guard<std::mutex> lock(task_mutex_);
-        task_completed_ = true;
+        if (task_completed_) return;
     }
+    // A cancellation request is not a terminal result. Nav2 may reject it or
+    // complete the goal before cancellation is processed. Only resultCallback()
+    // may publish CANCELED/SUCCEEDED/ABORTED and mark the task complete.
+    std::function<void()> cancel;
     {
-        std::lock_guard<std::mutex> lock(result_mutex_);
-        result_code_ = rclcpp_action::ResultCode::CANCELED;
+        std::lock_guard<std::mutex> lock(active_goal_mutex_);
+        if (active_goal_generation_ != goal_generation_.load()) return;
+        // Repeated operator requests must not send duplicate cancel RPCs.
+        if (cancel_requested_) return;
+        cancel_requested_ = true;
+        cancel = cancel_active_goal_;
     }
-
-    // Cancel for navigate_to_pose
-    navigate_to_pose_client_->async_cancel_all_goals();
-    // Cancel for navigate_through_poses
-    navigate_through_poses_client_->async_cancel_all_goals();
-    // Cancel for follow_waypoints
-    follow_waypoints_client_->async_cancel_all_goals();
-    // Cancel for spin
-    spin_client_->async_cancel_all_goals();
-    RCLCPP_INFO(this->get_logger(), "All navigation tasks have been canceled.");
+    // The goal may not have been accepted yet. goalResponseCallback will
+    // dispatch the pending cancellation once the current goal handle arrives.
+    if (cancel) cancel();
+    RCLCPP_INFO(this->get_logger(), "Requested cancellation of navigation goals; awaiting Nav2 result.");
 }
 
 bool RobotNavigator::isTaskComplete() {
@@ -200,6 +201,19 @@ void RobotNavigator::sendGoal(
     const typename rclcpp_action::Client<ActionT>::SharedPtr & action_client,
     const std::string & info_log)
 {
+    const auto generation = goal_generation_.fetch_add(1) + 1;
+    {
+        std::lock_guard<std::mutex> lock(active_goal_mutex_);
+        active_goal_generation_ = generation;
+        cancel_requested_ = false;
+        cancel_active_goal_ = {};
+    }
+    // A new goal must never expose the previous goal's terminal result while
+    // Nav2 has not yet accepted or completed this request.
+    {
+        std::lock_guard<std::mutex> lock(result_mutex_);
+        result_code_ = rclcpp_action::ResultCode::UNKNOWN;
+    }
     // Ставим флаг, что задача ещё не завершена
     {
         std::lock_guard<std::mutex> lock(task_mutex_);
@@ -214,19 +228,65 @@ void RobotNavigator::sendGoal(
     // Настраиваем колбэки (goal_response, feedback, result)
     auto send_goal_options = typename rclcpp_action::Client<ActionT>::SendGoalOptions();
     send_goal_options.goal_response_callback =
-        std::bind(&RobotNavigator::goalResponseCallback<ActionT>, this, std::placeholders::_1);
+        [this, generation, action_client](auto handle) {
+            std::function<void()> cancel;
+            {
+                std::lock_guard<std::mutex> lock(active_goal_mutex_);
+                if (generation != active_goal_generation_) return;
+                if (handle) {
+                    cancel_active_goal_ = [this, generation, action_client, handle]() {
+                        // A replacement may occur after the callback copies this
+                        // closure but before it dispatches the cancellation.
+                        // Never cancel a superseded goal in that window.
+                        std::lock_guard<std::mutex> lock(active_goal_mutex_);
+                        if (generation != active_goal_generation_) return;
+                        action_client->async_cancel_goal(handle);
+                    };
+                    if (cancel_requested_) cancel = cancel_active_goal_;
+                }
+            }
+            if (cancel) cancel();
+            goalResponseCallback<ActionT>(handle, generation);
+        };
     send_goal_options.feedback_callback =
-        std::bind(&RobotNavigator::feedbackCallback<ActionT>, this, std::placeholders::_1, std::placeholders::_2);
+        [this, generation](auto handle, auto feedback) {
+            feedbackCallback<ActionT>(handle, feedback, generation);
+        };
     send_goal_options.result_callback =
-        std::bind(&RobotNavigator::resultCallback<ActionT>, this, std::placeholders::_1);
+        [this, generation](const auto &result) { resultCallback<ActionT>(result, generation); };
+
+    // Fail this command without shutting down unrelated ROS2 nodes.
+    if (!action_client->action_server_is_ready()) {
+        {
+            std::lock_guard<std::mutex> lock(result_mutex_);
+            result_code_ = rclcpp_action::ResultCode::UNKNOWN;
+        }
+        {
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            task_completed_ = true;
+        }
+        RCLCPP_ERROR(get_logger(), "Nav2 action server is not ready; goal was not sent.");
+        return;
+    }
 
     // Асинхронно отправляем goal
     action_client->async_send_goal(goal_msg, send_goal_options);
 }
 
 template <typename T>
-void RobotNavigator::goalResponseCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr goal_handle) {
+void RobotNavigator::goalResponseCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr goal_handle, std::uint64_t generation) {
+    if (generation != goal_generation_.load()) return;
     if (!goal_handle) {
+        // Rejected goals have no result callback. Complete the request as an
+        // unsuccessful outcome rather than leaving the workstation waiting.
+        {
+            std::lock_guard<std::mutex> lock(result_mutex_);
+            result_code_ = rclcpp_action::ResultCode::UNKNOWN;
+        }
+        {
+            std::lock_guard<std::mutex> lock(task_mutex_);
+            task_completed_ = true;
+        }
         RCLCPP_ERROR(get_logger(), "Task was rejected by server.");
     } else {
         RCLCPP_INFO(get_logger(), "Task accepted by server.");
@@ -236,8 +296,9 @@ void RobotNavigator::goalResponseCallback(typename rclcpp_action::ClientGoalHand
 template <typename T>
 void RobotNavigator::feedbackCallback(
     typename rclcpp_action::ClientGoalHandle<T>::SharedPtr, 
-    const std::shared_ptr<const typename T::Feedback> feedback)
+    const std::shared_ptr<const typename T::Feedback> feedback, std::uint64_t generation)
 {
+    if (generation != goal_generation_.load()) return;
     auto now = this->now();
 
     if ((now - last_feedback_time_).seconds() > 0.5) { // Update feedback every half of second
@@ -285,7 +346,8 @@ void RobotNavigator::feedbackCallback(
 }
 
 template <typename T>
-void RobotNavigator::resultCallback(const typename rclcpp_action::ClientGoalHandle<T>::WrappedResult &result) {
+void RobotNavigator::resultCallback(const typename rclcpp_action::ClientGoalHandle<T>::WrappedResult &result, std::uint64_t generation) {
+    if (generation != goal_generation_.load()) return;
     {
         std::lock_guard<std::mutex> lock(result_mutex_);
         result_code_ = result.code;
