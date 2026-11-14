@@ -149,6 +149,57 @@ TEST_F(WatchdogDdsTest, ExplicitRevokePublishesStampedZeroWithConfiguredFrame)
     EXPECT_FALSE(VelocityWatchdogTestPeer::pending(*node));
 }
 
+// Verify timeout-driven stamped stop independently of explicit revoke.
+TEST_F(WatchdogDdsTest, ExpiredLeasePublishesOneStampedZero)
+{
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/watchdog_stamped_ttl/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/watchdog_stamped_ttl/cmd_vel"),
+        rclcpp::Parameter("basecontrol.cmd_vel_msg_type", "twist_stamped"),
+        rclcpp::Parameter("basecontrol.cmd_vel_frame_id", "robot_c/base_link")});
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("watchdog_stamped_ttl_observer");
+    std::vector<geometry_msgs::msg::TwistStamped> received;
+    auto sub = observer->create_subscription<geometry_msgs::msg::TwistStamped>(
+        "/watchdog_stamped_ttl/cmd_vel", 10,
+        [&](geometry_msgs::msg::TwistStamped::SharedPtr msg) { received.push_back(*msg); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/watchdog_stamped_ttl/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GT(node->count_subscribers("/watchdog_stamped_ttl/cmd_vel"), 0u);
+    VelocityWatchdogTestPeer::arm(*node, 100);
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.empty() && std::chrono::steady_clock::now() < deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_EQ(received.front().header.frame_id, "robot_c/base_link");
+    const auto& zero = received.front().twist;
+    EXPECT_DOUBLE_EQ(zero.linear.x, 0.0);
+    EXPECT_DOUBLE_EQ(zero.linear.y, 0.0);
+    EXPECT_DOUBLE_EQ(zero.linear.z, 0.0);
+    EXPECT_DOUBLE_EQ(zero.angular.x, 0.0);
+    EXPECT_DOUBLE_EQ(zero.angular.y, 0.0);
+    EXPECT_DOUBLE_EQ(zero.angular.z, 0.0);
+    EXPECT_FALSE(VelocityWatchdogTestPeer::pending(*node));
+    const auto quiet_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+    while (std::chrono::steady_clock::now() < quiet_until) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_EQ(received.size(), 1u);
+}
+
 // A lost transport session must revoke an already admitted nonzero command.
 // This simulates disconnect at the gate; network disconnect wiring remains a
 // separate integration gate and is not claimed by this fixture.
