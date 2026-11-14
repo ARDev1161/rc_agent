@@ -122,6 +122,16 @@ if(BUILD_TESTING)
     target_link_libraries(map_endpoint_binding_test RobotProtos)
   endif()
 
+  ament_add_gtest(velocity_watchdog_dds_test
+    test/unit_tests/velocity_watchdog_dds_test.cpp
+    modules/basecontrol/basecontrol.cpp
+  )
+  if(TARGET velocity_watchdog_dds_test)
+    target_include_directories(velocity_watchdog_dds_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    ament_target_dependencies(velocity_watchdog_dds_test rclcpp geometry_msgs nav_msgs)
+    target_link_libraries(velocity_watchdog_dds_test RobotProtos)
+  endif()
+
   ament_add_gtest(endpoint_binding_test
     test/unit_tests/endpoint_binding_test.cpp
     modules/basecontrol/basecontrol.cpp
