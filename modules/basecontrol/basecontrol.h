@@ -8,7 +8,7 @@
 #include <memory>
 #include <mutex>
 #include "robot.grpc.pb.h"
-#include "network/v2_velocity_gate.h"
+#include "../../network/v2_velocity_gate.h"
 
 class BaseControlNode : public rclcpp::Node {
 public:
