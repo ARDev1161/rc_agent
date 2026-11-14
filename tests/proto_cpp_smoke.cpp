@@ -176,6 +176,26 @@ int main() {
   ack_gate.grant("session-B", "lease-B", ack_deadline);
   assert(ack_gate.admit(valid_velocity, "session-B", "lease-B", true, ack_deadline));
 
+  // An admitted command cannot be renewed with a timestamp older than the
+  // previous admission, even if it remains after the lease start.
+  rc::api::v2::VelocityGate rollback_gate;
+  const auto rollback_start = t0 + std::chrono::seconds(1);
+  rollback_gate.grant("session-A", "lease-A", rollback_start);
+  valid_velocity.set_sequence(44);
+  assert(rollback_gate.admit(valid_velocity, "session-A", "lease-A", true,
+                             rollback_start + std::chrono::milliseconds(100)));
+  valid_velocity.set_sequence(45);
+  assert(!rollback_gate.admit(valid_velocity, "session-A", "lease-A", true,
+                              rollback_start + std::chrono::milliseconds(99)));
+  assert(rollback_gate.stopPending(rollback_start + std::chrono::milliseconds(100)));
+  rollback_gate.grant("session-B", "lease-B", rollback_start + std::chrono::milliseconds(100));
+  assert(!rollback_gate.admit(valid_velocity, "session-B", "lease-B", true,
+                              rollback_start + std::chrono::milliseconds(100)));
+  rollback_gate.acknowledgeStopPublished();
+  rollback_gate.grant("session-B", "lease-B", rollback_start + std::chrono::milliseconds(100));
+  assert(rollback_gate.admit(valid_velocity, "session-B", "lease-B", true,
+                             rollback_start + std::chrono::milliseconds(100)));
+
   rc::api::v2::ChatMessage chat;
   chat.set_text("Are you there?");
   assert(chat.content_case() == rc::api::v2::ChatMessage::kText);
