@@ -122,7 +122,7 @@ int main() {
         default: component->set_z(bad); break;
       }
       gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
-  gate.grant("session-A", "lease-A", t0);
+      gate.grant("session-A", "lease-A", t0);
       assert(!gate.admit(candidate, "session-A", "lease-A", true, t0));
       assert(gate.expired(t0));
       assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
@@ -142,7 +142,7 @@ int main() {
                      t0 + std::chrono::milliseconds(1)));
 
   // A rejected command after motion was admitted must request exactly one
-  // stop, and must prevent a new lease until the watchdog drains it.
+  // stop, and must prevent a new lease until the watchdog acknowledges it.
   rc::api::v2::VelocityGate rejected_gate;
   rc::api::v2::Velocity valid_velocity = velocity;
   valid_velocity.set_sequence(43);
