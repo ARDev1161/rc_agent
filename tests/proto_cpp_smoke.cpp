@@ -158,6 +158,21 @@ int main() {
   rejected_gate.revoke();
   assert(rejected_gate.consumeExpiredMotion(t0));
 
+  // A failed ROS stop publication must not release the safety barrier.
+  rc::api::v2::VelocityGate ack_gate;
+  ack_gate.grant("session-A", "lease-A", t0);
+  assert(ack_gate.admit(valid_velocity, "session-A", "lease-A", true, t0));
+  const auto ack_deadline = t0 + std::chrono::milliseconds(250);
+  assert(!ack_gate.stopPending(t0 + std::chrono::milliseconds(249)));
+  assert(ack_gate.stopPending(ack_deadline));
+  assert(ack_gate.stopPending(ack_deadline)); // retry after publisher failure
+  ack_gate.grant("session-B", "lease-B", ack_deadline);
+  assert(!ack_gate.admit(valid_velocity, "session-B", "lease-B", true, ack_deadline));
+  ack_gate.acknowledgeStopPublished(); // only after zero Twist is published
+  assert(!ack_gate.stopPending(ack_deadline));
+  ack_gate.grant("session-B", "lease-B", ack_deadline);
+  assert(ack_gate.admit(valid_velocity, "session-B", "lease-B", true, ack_deadline));
+
   rc::api::v2::ChatMessage chat;
   chat.set_text("Are you there?");
   assert(chat.content_case() == rc::api::v2::ChatMessage::kText);
