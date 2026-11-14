@@ -19,6 +19,10 @@ public:
         node.velocity_gate_.grant("test-session", "test-lease", now);
         rc::api::v2::Velocity command;
         command.set_sequence(1);
+        // Arm with actual nonzero SI motion; the watchdog must publish zero,
+        // not merely echo the last admitted command.
+        command.mutable_linear()->set_x(0.2);
+        command.mutable_angular()->set_z(-0.1);
         command.set_valid_for_ms(ttl_ms);
         command.set_frame_id("base_link");
         ASSERT_TRUE(node.velocity_gate_.admit(
@@ -134,6 +138,49 @@ TEST_F(WatchdogDdsTest, ExplicitRevokePublishesStampedZeroWithConfiguredFrame)
     EXPECT_EQ(received.front().header.frame_id, "robot_b/base_link");
     EXPECT_DOUBLE_EQ(received.front().twist.linear.x, 0.0);
     EXPECT_DOUBLE_EQ(received.front().twist.angular.z, 0.0);
+    EXPECT_FALSE(VelocityWatchdogTestPeer::pending(*node));
+}
+
+// A lost transport session must revoke an already admitted nonzero command.
+// This simulates disconnect at the gate; network disconnect wiring remains a
+// separate integration gate and is not claimed by this fixture.
+TEST_F(WatchdogDdsTest, DisconnectedSessionPublishesZeroTwist)
+{
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/watchdog_disconnect/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/watchdog_disconnect/cmd_vel")});
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("watchdog_disconnect_observer");
+    std::vector<geometry_msgs::msg::Twist> received;
+    auto sub = observer->create_subscription<geometry_msgs::msg::Twist>(
+        "/watchdog_disconnect/cmd_vel", 10,
+        [&](geometry_msgs::msg::Twist::SharedPtr msg) { received.push_back(*msg); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/watchdog_disconnect/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GT(node->count_subscribers("/watchdog_disconnect/cmd_vel"), 0u);
+    VelocityWatchdogTestPeer::arm(*node, 1000);
+    VelocityWatchdogTestPeer::revoke(*node); // simulate authenticated session disconnect
+    ASSERT_TRUE(VelocityWatchdogTestPeer::pending(*node));
+    VelocityWatchdogTestPeer::grantNext(*node);
+    ASSERT_TRUE(VelocityWatchdogTestPeer::expired(*node));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.empty() && std::chrono::steady_clock::now() < deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_DOUBLE_EQ(received.front().linear.x, 0.0);
+    EXPECT_DOUBLE_EQ(received.front().angular.z, 0.0);
     EXPECT_FALSE(VelocityWatchdogTestPeer::pending(*node));
 }
 
