@@ -28,6 +28,15 @@ public:
         return node.velocity_gate_.stopPending(rc::api::v2::VelocityGate::Clock::now());
     }
     static void revoke(BaseControlNode& node) { node.velocity_gate_.revoke(); }
+    static bool rejectReleasedDeadman(BaseControlNode& node) {
+        rc::api::v2::Velocity command;
+        command.set_sequence(2);
+        command.set_valid_for_ms(1000);
+        command.set_frame_id("base_link");
+        return node.velocity_gate_.admit(
+            command, "test-session", "test-lease", false,
+            rc::api::v2::VelocityGate::Clock::now());
+    }
     static void grantNext(BaseControlNode& node) {
         node.velocity_gate_.grant("next-session", "next-lease",
                                   rc::api::v2::VelocityGate::Clock::now());
@@ -125,5 +134,46 @@ TEST_F(WatchdogDdsTest, ExplicitRevokePublishesStampedZeroWithConfiguredFrame)
     EXPECT_EQ(received.front().header.frame_id, "robot_b/base_link");
     EXPECT_DOUBLE_EQ(received.front().twist.linear.x, 0.0);
     EXPECT_DOUBLE_EQ(received.front().twist.angular.z, 0.0);
+    EXPECT_FALSE(VelocityWatchdogTestPeer::pending(*node));
+}
+
+TEST_F(WatchdogDdsTest, ReleasedDeadmanLatchesStopUntilDdsPublish)
+{
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/watchdog_deadman/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/watchdog_deadman/cmd_vel")});
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("watchdog_deadman_observer");
+    std::vector<geometry_msgs::msg::Twist> received;
+    auto sub = observer->create_subscription<geometry_msgs::msg::Twist>(
+        "/watchdog_deadman/cmd_vel", 10,
+        [&](geometry_msgs::msg::Twist::SharedPtr msg) { received.push_back(*msg); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/watchdog_deadman/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GT(node->count_subscribers("/watchdog_deadman/cmd_vel"), 0u);
+    VelocityWatchdogTestPeer::arm(*node, 1000);
+    ASSERT_FALSE(VelocityWatchdogTestPeer::rejectReleasedDeadman(*node));
+    ASSERT_TRUE(VelocityWatchdogTestPeer::pending(*node));
+    VelocityWatchdogTestPeer::grantNext(*node);
+    EXPECT_TRUE(VelocityWatchdogTestPeer::pending(*node));
+    EXPECT_TRUE(VelocityWatchdogTestPeer::expired(*node));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.empty() && std::chrono::steady_clock::now() < deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_DOUBLE_EQ(received.front().linear.x, 0.0);
+    EXPECT_DOUBLE_EQ(received.front().angular.z, 0.0);
     EXPECT_FALSE(VelocityWatchdogTestPeer::pending(*node));
 }
