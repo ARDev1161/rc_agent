@@ -159,6 +159,11 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
     cmd_vel_smoothed_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(smoothed_topic, 10);
     cmd_vel_unsafety_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(nav_topic, 10);
 
+    // Monotonic watchdog remains active independently of network callbacks.
+    // The gate is fail-closed: without an authenticated lease, no motion is sent.
+    velocity_watchdog_timer_ = this->create_wall_timer(
+        50ms, std::bind(&BaseControlNode::checkVelocityWatchdog, this));
+
     // No polling of legacy protobuf velocity: remote motion must enter only
     // through the future authorized v2 TTL/session/lease/deadman path.
     RCLCPP_INFO(this->get_logger(), "BaseControl ROS output: topic=%s type=%s frame_id=%s",
@@ -193,6 +198,29 @@ void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& 
         cmd_vel_unsafety_pub_->publish(twist_msg);
     } else {
         RCLCPP_ERROR(get_logger(), "Invalid topic name: %s", topic.c_str());
+    }
+}
+
+void BaseControlNode::checkVelocityWatchdog() {
+    if (!velocity_gate_.stopPending(rc::api::v2::VelocityGate::Clock::now())) return;
+    // Only the configured cmd_vel publisher is used. A failed publish must
+    // leave the gate latched so the next timer tick retries the stop.
+    try {
+        geometry_msgs::msg::Twist zero;
+        if (cmd_vel_msg_type_ == "twist_stamped") {
+            if (!cmd_vel_stamped_pub_) return;
+            geometry_msgs::msg::TwistStamped stamped;
+            stamped.header.stamp = this->now();
+            stamped.header.frame_id = cmd_vel_frame_id_;
+            stamped.twist = zero;
+            cmd_vel_stamped_pub_->publish(stamped);
+        } else {
+            if (!cmd_vel_pub_) return;
+            cmd_vel_pub_->publish(zero);
+        }
+        velocity_gate_.acknowledgeStopPublished();
+    } catch (const std::exception &e) {
+        RCLCPP_ERROR(get_logger(), "Velocity watchdog stop publish failed: %s", e.what());
     }
 }
 
