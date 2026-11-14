@@ -73,34 +73,34 @@ int main() {
   rc::api::v2::VelocityGate gate;
   const auto t0 = rc::api::v2::VelocityGate::Clock::time_point{};
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
-  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
   gate.grant("session-A", "lease-A", t0);
   assert(!gate.admit(velocity, "session-A", "lease-A", false, t0));
-  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
   gate.grant("session-A", "lease-A", t0);
   assert(!gate.admit(velocity, "session-B", "lease-A", true, t0));
-  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
   gate.grant("session-A", "lease-A", t0);
   assert(!gate.admit(velocity, "session-A", "lease-B", true, t0));
-  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
   gate.grant("session-A", "lease-A", t0);
   assert(gate.admit(velocity, "session-A", "lease-A", true, t0));
   assert(!gate.expired(t0 + std::chrono::milliseconds(249)));
   assert(gate.expired(t0 + std::chrono::milliseconds(250)));
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0 + std::chrono::milliseconds(250)));
-  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
   gate.grant("session-A", "lease-A", t0);
   assert(gate.admit(velocity, "session-A", "lease-A", true, t0));
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0)); // replay
-  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
   gate.grant("session-A", "lease-A", t0);
   velocity.set_valid_for_ms(0);
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
-  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
   gate.grant("session-A", "lease-A", t0);
   velocity.set_valid_for_ms(1001);
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
-  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
   gate.grant("session-A", "lease-A", t0);
   velocity.set_valid_for_ms(250);
   velocity.mutable_linear()->set_x(std::numeric_limits<double>::quiet_NaN());
@@ -121,7 +121,7 @@ int main() {
         case 1: component->set_y(bad); break;
         default: component->set_z(bad); break;
       }
-      gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
+      gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
   gate.grant("session-A", "lease-A", t0);
       assert(!gate.admit(candidate, "session-A", "lease-A", true, t0));
       assert(gate.expired(t0));
@@ -130,12 +130,12 @@ int main() {
   }
   // An invalid frame or time rollback must not preserve the prior lease.
   velocity.mutable_linear()->set_x(0.125);
-  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
+  gate.acknowledgeStopPublished(); // test simulates successful ROS zero publish
   gate.grant("session-A", "lease-A", t0);
   velocity.clear_frame_id();
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
   velocity.set_frame_id("base_link");
-  gate.consumeExpiredMotion(t0);
+  gate.acknowledgeStopPublished();
   gate.grant("session-A", "lease-A", t0 + std::chrono::milliseconds(1));
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
   assert(!gate.admit(velocity, "session-A", "lease-A", true,
@@ -151,12 +151,15 @@ int main() {
   assert(!rejected_gate.admit(valid_velocity, "session-A", "lease-A", false, t0));
   rejected_gate.grant("session-B", "lease-B", t0);
   assert(!rejected_gate.admit(valid_velocity, "session-B", "lease-B", true, t0));
-  assert(rejected_gate.consumeExpiredMotion(t0));
-  assert(!rejected_gate.consumeExpiredMotion(t0));
+  assert(rejected_gate.stopPending(t0));
+  assert(rejected_gate.stopPending(t0)); // stop remains pending until ROS publish ack
+  rejected_gate.acknowledgeStopPublished();
+  assert(!rejected_gate.stopPending(t0));
   rejected_gate.grant("session-B", "lease-B", t0);
   assert(rejected_gate.admit(valid_velocity, "session-B", "lease-B", true, t0));
   rejected_gate.revoke();
-  assert(rejected_gate.consumeExpiredMotion(t0));
+  assert(rejected_gate.stopPending(t0));
+  rejected_gate.acknowledgeStopPublished();
 
   // A failed ROS stop publication must not release the safety barrier.
   rc::api::v2::VelocityGate ack_gate;
@@ -185,25 +188,29 @@ int main() {
   stage.set_state(rc::api::v2::TaskStatus::ACCEPTED);
   assert(stage.state() != rc::api::v2::TaskStatus::SUCCEEDED);
 
-  // A timeout must be observable once by the future ROS stop watchdog.
+  // A timeout must remain observable until ROS zero publication is acknowledged.
   // This checks the fail-closed primitive only; no remote motion is enabled.
   using Gate = rc::api::v2::VelocityGate;
   Gate timeout_gate;
   const auto start = Gate::Clock::time_point{} + std::chrono::seconds(10);
   velocity.mutable_linear()->set_x(0.125); // restore valid SI input after NaN rejection
   timeout_gate.grant("session-A", "lease-A", start);
-  assert(!timeout_gate.consumeExpiredMotion(start));
+  assert(!timeout_gate.stopPending(start));
   assert(timeout_gate.admit(velocity, "session-A", "lease-A", true, start));
   const auto before_expiry = start + std::chrono::milliseconds(249);
   const auto expiry = start + std::chrono::milliseconds(250);
   assert(!timeout_gate.expired(before_expiry));
-  assert(!timeout_gate.consumeExpiredMotion(before_expiry));
+  assert(!timeout_gate.stopPending(before_expiry));
   assert(timeout_gate.expired(expiry));
-  assert(timeout_gate.consumeExpiredMotion(expiry));
-  assert(!timeout_gate.consumeExpiredMotion(expiry)); // no duplicate stop events
+  assert(timeout_gate.stopPending(expiry));
+  assert(timeout_gate.stopPending(expiry)); // retry until zero is published
+  timeout_gate.grant("session-B", "lease-B", expiry);
+  assert(!timeout_gate.admit(velocity, "session-B", "lease-B", true, expiry));
+  timeout_gate.acknowledgeStopPublished(); // test simulates successful ROS publish
+  assert(!timeout_gate.stopPending(expiry));
   assert(!timeout_gate.admit(velocity, "session-A", "lease-A", true, expiry));
   timeout_gate.grant("session-B", "lease-B", expiry);
-  assert(!timeout_gate.consumeExpiredMotion(expiry)); // no motion ever admitted
+  assert(!timeout_gate.stopPending(expiry)); // no motion ever admitted
   assert(!timeout_gate.admit(velocity, "session-A", "lease-A", true, expiry));
 
   return 0;
