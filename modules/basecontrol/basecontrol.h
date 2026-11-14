@@ -10,6 +10,8 @@
 #include "robot.grpc.pb.h"
 #include "../../network/v2_velocity_gate.h"
 
+class VelocityWatchdogTestPeer;
+
 class BaseControlNode : public rclcpp::Node {
 public:
     enum class ControlStatus {
@@ -29,6 +31,7 @@ public:
     ControlStatus getBaseControlStatus();
 
 private:
+    friend class VelocityWatchdogTestPeer; // DDS fixture, not a production grant API
     class ControlStateMachine;
 
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
