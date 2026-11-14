@@ -6,6 +6,8 @@
 #include <thread>
 #include <mutex>
 #include <vector>
+#include <limits>
+#include <cstdint>
 #include "modules/basecontrol/basecontrol.h"
 
 // The production gate is intentionally inaccessible to network callers.
@@ -282,4 +284,66 @@ TEST_F(WatchdogDdsTest, ReleasedDeadmanLatchesStopUntilDdsPublish)
     EXPECT_DOUBLE_EQ(received.front().linear.x, 0.0);
     EXPECT_DOUBLE_EQ(received.front().angular.z, 0.0);
     EXPECT_FALSE(VelocityWatchdogTestPeer::pending(*node));
+}
+
+namespace {
+using Gate = rc::api::v2::VelocityGate;
+using namespace std::chrono_literals;
+
+rc::api::v2::Velocity makeVelocity(std::uint64_t sequence, unsigned ttl_ms) {
+    rc::api::v2::Velocity command;
+    command.set_sequence(sequence);
+    command.set_valid_for_ms(ttl_ms);
+    command.set_frame_id("base_link");
+    command.mutable_linear()->set_x(0.2);
+    return command;
+}
+} // namespace
+
+// Deterministic monotonic-clock checks complement the DDS delivery tests.
+// These do not authenticate a network session or grant production teleop.
+TEST(VelocityGateContract, ExpiryRequiresPublishedStopBeforeNewLease) {
+    Gate gate;
+    const auto t0 = Gate::Clock::time_point{} + 10s;
+    gate.grant("session-a", "lease-a", t0);
+    EXPECT_TRUE(gate.admit(makeVelocity(1, 100), "session-a", "lease-a", true, t0));
+    EXPECT_FALSE(gate.stopPending(t0 + 99ms));
+    EXPECT_TRUE(gate.stopPending(t0 + 100ms));
+    gate.grant("session-b", "lease-b", t0 + 101ms);
+    EXPECT_FALSE(gate.admit(makeVelocity(1, 100), "session-b", "lease-b", true, t0 + 101ms));
+    EXPECT_TRUE(gate.stopPending(t0 + 102ms));
+    gate.acknowledgeStopPublished();
+    EXPECT_FALSE(gate.stopPending(t0 + 103ms));
+    gate.grant("session-b", "lease-b", t0 + 104ms);
+    EXPECT_TRUE(gate.admit(makeVelocity(1, 100), "session-b", "lease-b", true, t0 + 104ms));
+}
+
+TEST(VelocityGateContract, ReplayedSequenceRevokesLeaseAndLatchesStop) {
+    Gate gate;
+    const auto t0 = Gate::Clock::time_point{} + 10s;
+    gate.grant("session", "lease", t0);
+    EXPECT_TRUE(gate.admit(makeVelocity(7, 500), "session", "lease", true, t0));
+    EXPECT_FALSE(gate.admit(makeVelocity(7, 500), "session", "lease", true, t0 + 1ms));
+    EXPECT_TRUE(gate.stopPending(t0 + 2ms));
+    EXPECT_TRUE(gate.expired(t0 + 2ms));
+}
+
+TEST(VelocityGateContract, MonotonicRollbackRevokesAfterAcceptedMotion) {
+    Gate gate;
+    const auto t0 = Gate::Clock::time_point{} + 10s;
+    gate.grant("session", "lease", t0);
+    EXPECT_TRUE(gate.admit(makeVelocity(1, 500), "session", "lease", true, t0 + 20ms));
+    EXPECT_FALSE(gate.admit(makeVelocity(2, 500), "session", "lease", true, t0 + 19ms));
+    EXPECT_TRUE(gate.stopPending(t0 + 21ms));
+}
+
+TEST(VelocityGateContract, InvalidNonFiniteMotionRevokesWithoutUnlockingStop) {
+    Gate gate;
+    const auto t0 = Gate::Clock::time_point{} + 10s;
+    gate.grant("session", "lease", t0);
+    EXPECT_TRUE(gate.admit(makeVelocity(1, 500), "session", "lease", true, t0));
+    auto invalid = makeVelocity(2, 500);
+    invalid.mutable_angular()->set_z(std::numeric_limits<double>::infinity());
+    EXPECT_FALSE(gate.admit(invalid, "session", "lease", true, t0 + 1ms));
+    EXPECT_TRUE(gate.stopPending(t0 + 2ms));
 }
