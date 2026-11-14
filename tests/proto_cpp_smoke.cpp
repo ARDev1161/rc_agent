@@ -73,26 +73,34 @@ int main() {
   rc::api::v2::VelocityGate gate;
   const auto t0 = rc::api::v2::VelocityGate::Clock::time_point{};
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
   gate.grant("session-A", "lease-A", t0);
   assert(!gate.admit(velocity, "session-A", "lease-A", false, t0));
+  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
   gate.grant("session-A", "lease-A", t0);
   assert(!gate.admit(velocity, "session-B", "lease-A", true, t0));
+  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
   gate.grant("session-A", "lease-A", t0);
   assert(!gate.admit(velocity, "session-A", "lease-B", true, t0));
+  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
   gate.grant("session-A", "lease-A", t0);
   assert(gate.admit(velocity, "session-A", "lease-A", true, t0));
   assert(!gate.expired(t0 + std::chrono::milliseconds(249)));
   assert(gate.expired(t0 + std::chrono::milliseconds(250)));
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0 + std::chrono::milliseconds(250)));
+  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
   gate.grant("session-A", "lease-A", t0);
   assert(gate.admit(velocity, "session-A", "lease-A", true, t0));
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0)); // replay
+  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
   gate.grant("session-A", "lease-A", t0);
   velocity.set_valid_for_ms(0);
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
   gate.grant("session-A", "lease-A", t0);
   velocity.set_valid_for_ms(1001);
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
+  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
   gate.grant("session-A", "lease-A", t0);
   velocity.set_valid_for_ms(250);
   velocity.mutable_linear()->set_x(std::numeric_limits<double>::quiet_NaN());
@@ -113,7 +121,8 @@ int main() {
         case 1: component->set_y(bad); break;
         default: component->set_z(bad); break;
       }
-      gate.grant("session-A", "lease-A", t0);
+      gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
+  gate.grant("session-A", "lease-A", t0);
       assert(!gate.admit(candidate, "session-A", "lease-A", true, t0));
       assert(gate.expired(t0));
       assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
@@ -121,14 +130,33 @@ int main() {
   }
   // An invalid frame or time rollback must not preserve the prior lease.
   velocity.mutable_linear()->set_x(0.125);
+  gate.consumeExpiredMotion(t0); // drain any pending fail-safe stop
   gate.grant("session-A", "lease-A", t0);
   velocity.clear_frame_id();
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
   velocity.set_frame_id("base_link");
+  gate.consumeExpiredMotion(t0);
   gate.grant("session-A", "lease-A", t0 + std::chrono::milliseconds(1));
   assert(!gate.admit(velocity, "session-A", "lease-A", true, t0));
   assert(!gate.admit(velocity, "session-A", "lease-A", true,
                      t0 + std::chrono::milliseconds(1)));
+
+  // A rejected command after motion was admitted must request exactly one
+  // stop, and must prevent a new lease until the watchdog drains it.
+  rc::api::v2::VelocityGate rejected_gate;
+  rc::api::v2::Velocity valid_velocity = velocity;
+  valid_velocity.set_sequence(43);
+  rejected_gate.grant("session-A", "lease-A", t0);
+  assert(rejected_gate.admit(valid_velocity, "session-A", "lease-A", true, t0));
+  assert(!rejected_gate.admit(valid_velocity, "session-A", "lease-A", false, t0));
+  rejected_gate.grant("session-B", "lease-B", t0);
+  assert(!rejected_gate.admit(valid_velocity, "session-B", "lease-B", true, t0));
+  assert(rejected_gate.consumeExpiredMotion(t0));
+  assert(!rejected_gate.consumeExpiredMotion(t0));
+  rejected_gate.grant("session-B", "lease-B", t0);
+  assert(rejected_gate.admit(valid_velocity, "session-B", "lease-B", true, t0));
+  rejected_gate.revoke();
+  assert(rejected_gate.consumeExpiredMotion(t0));
 
   rc::api::v2::ChatMessage chat;
   chat.set_text("Are you there?");
