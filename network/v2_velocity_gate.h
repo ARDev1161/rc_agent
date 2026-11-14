@@ -26,6 +26,7 @@ public:
         session_.clear();
         lease_.clear();
         has_sequence_ = false;
+        last_accepted_ = Clock::time_point{};
         last_sequence_ = 0;
         deadline_ = Clock::time_point{};
         // Preserve an outstanding stop request when motion is revoked.
@@ -34,7 +35,8 @@ public:
     bool admit(const Velocity& cmd, const std::string& session,
                const std::string& lease, bool deadman, Clock::time_point now) {
         if (pending_stop_ || !active_ || !deadman || session != session_ || lease != lease_ ||
-            now < lease_started_ || (has_sequence_ && now >= deadline_) ||
+            now < lease_started_ || (has_sequence_ && now < last_accepted_) ||
+            (has_sequence_ && now >= deadline_) ||
             cmd.valid_for_ms() == 0 || cmd.valid_for_ms() > 1000 ||
             (has_sequence_ && cmd.sequence() <= last_sequence_) ||
             cmd.frame_id().empty()) {
@@ -49,6 +51,7 @@ public:
             return false;
         }
         deadline_ = now + std::chrono::milliseconds(cmd.valid_for_ms());
+        last_accepted_ = now;
         last_sequence_ = cmd.sequence();
         has_sequence_ = true;
         return true;
@@ -73,7 +76,7 @@ public:
 
 private:
     std::string session_, lease_;
-    Clock::time_point lease_started_{}, deadline_{};
+    Clock::time_point lease_started_{}, deadline_{}, last_accepted_{};
     std::uint64_t last_sequence_ = 0;
     bool active_ = false, has_sequence_ = false, pending_stop_ = false;
 };
