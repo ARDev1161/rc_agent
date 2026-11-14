@@ -70,12 +70,7 @@ public:
     void acknowledgeStopPublished() {
         pending_stop_ = false;
     }
-    bool consumeExpiredMotion(Clock::time_point now) {
-        if (active_ && has_sequence_ && now >= deadline_) revoke();
-        if (!pending_stop_) return false;
-        pending_stop_ = false;
-        return true;
-    }
+
 private:
     std::string session_, lease_;
     Clock::time_point lease_started_{}, deadline_{};
