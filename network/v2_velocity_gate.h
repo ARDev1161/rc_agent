@@ -14,23 +14,26 @@ public:
     using Clock = std::chrono::steady_clock;
     void grant(const std::string& session, const std::string& lease, Clock::time_point now) {
         revoke();
-        if (session.empty() || lease.empty()) return;
+        if (session.empty() || lease.empty() || pending_stop_) return;
         session_ = session;
         lease_ = lease;
         lease_started_ = now;
         active_ = true;
     }
     void revoke() {
+        if (active_ && has_sequence_) pending_stop_ = true;
         active_ = false;
         session_.clear();
         lease_.clear();
         has_sequence_ = false;
         last_sequence_ = 0;
         deadline_ = Clock::time_point{};
+        // Preserve an outstanding stop request when motion is revoked.
+        // The ROS watchdog must drain this before accepting another lease.
     }
     bool admit(const Velocity& cmd, const std::string& session,
                const std::string& lease, bool deadman, Clock::time_point now) {
-        if (!active_ || !deadman || session != session_ || lease != lease_ ||
+        if (pending_stop_ || !active_ || !deadman || session != session_ || lease != lease_ ||
             now < lease_started_ || (has_sequence_ && now >= deadline_) ||
             cmd.valid_for_ms() == 0 || cmd.valid_for_ms() > 1000 ||
             (has_sequence_ && cmd.sequence() <= last_sequence_) ||
@@ -58,14 +61,15 @@ public:
     // MUST publish a zero Twist and revoke its authenticated transport lease.
     // No ROS publisher is owned by this transport-independent primitive.
     bool consumeExpiredMotion(Clock::time_point now) {
-        if (!active_ || !has_sequence_ || now < deadline_) return false;
-        revoke();
+        if (active_ && has_sequence_ && now >= deadline_) revoke();
+        if (!pending_stop_) return false;
+        pending_stop_ = false;
         return true;
     }
 private:
     std::string session_, lease_;
     Clock::time_point lease_started_{}, deadline_{};
     std::uint64_t last_sequence_ = 0;
-    bool active_ = false, has_sequence_ = false;
+    bool active_ = false, has_sequence_ = false, pending_stop_ = false;
 };
 } // namespace rc::api::v2
