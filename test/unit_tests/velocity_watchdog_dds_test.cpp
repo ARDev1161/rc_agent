@@ -95,6 +95,14 @@ TEST_F(WatchdogDdsTest, ExpiredLeasePublishesZeroTwist)
     EXPECT_DOUBLE_EQ(zero.angular.y, 0.0);
     EXPECT_DOUBLE_EQ(zero.angular.z, 0.0);
     EXPECT_FALSE(VelocityWatchdogTestPeer::pending(*node));
+    // Acknowledged stop is a one-shot event: subsequent watchdog ticks must
+    // not emit duplicate zero commands on the same lease.
+    const auto quiet_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+    while (std::chrono::steady_clock::now() < quiet_until) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_EQ(received.size(), 1u);
     VelocityWatchdogTestPeer::grantNext(*node);
     EXPECT_TRUE(VelocityWatchdogTestPeer::expired(*node)); // no new motion admitted
 }
