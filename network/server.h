@@ -2,6 +2,7 @@
 #define GSERVER_H
 
 #include <iostream>
+#include <cstdint>
 
 #include <grpcpp/grpcpp.h>
 #include <grpcpp/health_check_service_interface.h>
@@ -27,6 +28,9 @@ class grpcServer final : public ServerOnRobot::Service
 
     /// Mutex for protecting server data during RPC calls.
     std::mutex muServer;
+
+    /// Monotonic transport generation; even rebinding the same pointers revokes old streams.
+    std::uint64_t state_generation_ = 0;
 
     /**
      * @brief Handles a synchronous data exchange RPC.
