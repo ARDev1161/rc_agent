@@ -152,6 +152,7 @@ int main() {
         rebound_ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
         auto rebound = stub->DataStreamExchange(&rebound_ctx);
         Robot::Controls first;
+        first.mutable_light()->set_ledleftpower(73);
         require(rebound->Write(first), "same-pointer stream initial write failed");
         Robot::Sensors first_reply;
         require(rebound->Read(&first_reply), "same-pointer stream initial reply missing");
