@@ -57,6 +57,12 @@ jobs:
         env:
           PYTHONPATH: generated
         run: /usr/bin/python3 -m unittest discover -s tests -p test_proto_contract.py -v
+      - name: Compile and run fail-closed v2 velocity gate regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O0 -I. -I generated generated/*.pb.cc tests/v2_velocity_gate_smoke.cpp -lprotobuf -pthread -o generated/velocity_gate_smoke
+          ./generated/velocity_gate_smoke
       - name: Compile and run C++ v2 protocol smoke
         shell: bash
         run: |
