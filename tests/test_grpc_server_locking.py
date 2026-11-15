@@ -28,6 +28,17 @@ class GrpcServerLocking(unittest.TestCase):
         self.assertNotIn("stream->Read(controls_.get())", stream)
         self.assertNotIn("stream->Write(*sensors_)", stream)
 
+    def test_stream_preflight_and_generation_binding_are_atomic(self):
+        stream = SOURCE.split("grpc::Status grpcServer::DataStreamExchange(", 1)[1]
+        preflight = stream.split("Controls incoming;", 1)[0]
+        self.assertEqual(preflight.count("std::lock_guard<std::mutex> lock(muServer)"), 1)
+        self.assertLess(preflight.index("if (!controls_ || !sensors_)"),
+                        preflight.index("bound_controls = controls_"))
+        self.assertLess(preflight.index("bound_controls = controls_"),
+                        preflight.index("bound_sensors = sensors_"))
+        self.assertLess(preflight.index("bound_sensors = sensors_"),
+                        preflight.rindex("}"))
+
     def test_uninitialized_transport_fails_closed(self):
         self.assertGreaterEqual(SOURCE.count("grpc::StatusCode::FAILED_PRECONDITION"), 2)
 
