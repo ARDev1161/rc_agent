@@ -1284,3 +1284,9 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - Next: inspect new CI and fix failures, then prioritize transport authorization and disconnect-to-zero DDS evidence. No default/documentation branch merges.
 
 - Follow-up test correction: rc_agent [b55b3691](https://github.com/ARDev1161/rc_agent/commit/b55b3691ea0ebb3a95571802bdee6f26bf6043f3) explicitly sets the initial same-pointer stream control value to 73, so the post-rebind unchanged-state assertion is meaningful. New CI remains required on this corrected SHA; earlier queued/in-progress runs cannot prove it.
+
+
+## Handoff — 2026-11-16, deterministic v2 VelocityGate safety regression
+- rc_agent [6e195deb](https://github.com/ARDev1161/rc_agent/commit/6e195debff7a6b89f58d8b0f571f6040f4e24a9a) adds C++ safety regression for missing/wrong session or lease, deadman, TTL watchdog, pending-stop latch, replay, regrant after acknowledged stop, and transport disconnect revoke. [7c7ede18](https://github.com/ARDev1161/rc_agent/commit/7c7ede18b754262f038a2f0690d3884b1abc3797) executes it in protobuf-compatibility CI against generated C++ protobuf.
+- Prior exact feature HEAD CI SUCCESS: rc_agent e82a84f4 [43768800575](https://github.com/ARDev1161/rc_agent/actions/runs/43768800575); AmurCore 1befa1c8 [43768803331](https://github.com/ARDev1161/AmurCore/actions/runs/43768803331). Fresh CI for new test and PLAN HEAD required; local C++/Qt5/ROS2 builds NOT RUN. This test verifies gate semantics only, NOT a live gRPC disconnect-to-DDS zero publish.
+- Owner 2026-11-13 v2-only override applies: legacy compatibility and 255 scaling are obsolete despite older plan text. P1 ACCEPTANCE PENDING, P2 IN PROGRESS (owner authorized); real Gazebo/robot acceptance NOT RUN; remote motion remains disabled. No proto or production C++ changes. Next: verify exact HEAD CI and implement authenticated transport-to-VelocityGate binding and DDS zero-stop without bypassing safety.
