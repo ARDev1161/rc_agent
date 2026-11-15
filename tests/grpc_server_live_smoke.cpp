@@ -145,6 +145,29 @@ int main() {
         fresh->WritesDone();
         fresh->Finish();
     }
+    // Rebinding identical shared pointers is still a new transport generation.
+    // A reconnect must revoke old streams even when ROS reused its state objects.
+    {
+        grpc::ClientContext rebound_ctx;
+        rebound_ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        auto rebound = stub->DataStreamExchange(&rebound_ctx);
+        Robot::Controls first;
+        require(rebound->Write(first), "same-pointer stream initial write failed");
+        Robot::Sensors first_reply;
+        require(rebound->Read(&first_reply), "same-pointer stream initial reply missing");
+        service.setProtosPointers(replacement_controls, replacement_sensors);
+        Robot::Controls stale_command;
+        stale_command.mutable_light()->set_ledleftpower(91);
+        (void)rebound->Write(stale_command);
+        Robot::Sensors stale_reply;
+        require(!rebound->Read(&stale_reply),
+                "stream survived same-pointer transport generation change");
+        const auto status = rebound->Finish();
+        require(status.error_code() == grpc::StatusCode::FAILED_PRECONDITION,
+                "same-pointer rebind did not revoke stale stream");
+        require(replacement_controls->light().ledleftpower() == 73,
+                "stale stream changed controls after same-pointer rebind");
+    }
     // Removing the transport state must fail closed for both RPC shapes.
     // A newly opened idle stream must not wait for its first client write.
     service.setProtosPointers(nullptr, nullptr);
