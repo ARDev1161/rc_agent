@@ -145,6 +145,27 @@ int main() {
         fresh->WritesDone();
         fresh->Finish();
     }
+    // Removing the transport state must fail closed for both RPC shapes.
+    // A newly opened idle stream must not wait for its first client write.
+    service.setProtosPointers(nullptr, nullptr);
+    {
+        grpc::ClientContext ctx;
+        Robot::Sensors unavailable_reply;
+        const auto status = stub->DataExchange(&ctx, request, &unavailable_reply);
+        require(status.error_code() == grpc::StatusCode::FAILED_PRECONDITION,
+                "unary RPC accepted controls after transport state removal");
+    }
+    {
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        auto idle_after_disconnect = stub->DataStreamExchange(&ctx);
+        Robot::Sensors unavailable_reply;
+        require(!idle_after_disconnect->Read(&unavailable_reply),
+                "idle stream emitted sensors after transport state removal");
+        const auto status = idle_after_disconnect->Finish();
+        require(status.error_code() == grpc::StatusCode::FAILED_PRECONDITION,
+                "idle stream after disconnect did not fail closed");
+    }
     // The stale stream was already finalized above. gRPC permits exactly one
     // Finish() per client stream; a second Finish() aborts on older runtimes.
     server->Shutdown();
