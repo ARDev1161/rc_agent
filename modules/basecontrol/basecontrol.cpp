@@ -156,6 +156,12 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
     if (smoothed_topic.empty() || nav_topic.empty()) {
         throw std::invalid_argument("basecontrol auxiliary velocity topics must not be empty");
     }
+    // Distinct ROS output names are a safety boundary: an auxiliary publisher
+    // must never alias the guarded cmd_vel output and bypass its watchdog.
+    if (smoothed_topic == cmd_vel_topic_ || nav_topic == cmd_vel_topic_ ||
+        smoothed_topic == nav_topic) {
+        throw std::invalid_argument("basecontrol velocity output topics must be distinct");
+    }
     cmd_vel_smoothed_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(smoothed_topic, 10);
     cmd_vel_unsafety_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(nav_topic, 10);
 
