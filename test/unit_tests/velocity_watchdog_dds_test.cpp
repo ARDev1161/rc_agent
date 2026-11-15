@@ -404,13 +404,19 @@ TEST_F(WatchdogDdsTest, NonFiniteLocalVelocityIsRejectedOnConfiguredOutput)
     }
     ASSERT_GT(node->count_subscribers("/watchdog_invalid/cmd_vel"), 0u);
 
-    // Check all six axes, including axes unused by a differential-drive robot.
+    // Every axis must reject NaN and both signs of infinity. A robot that
+    // currently uses only x/z must still reject invalid unused axes.
     for (int axis = 0; axis < 6; ++axis) {
-        geometry_msgs::msg::Twist invalid;
-        double* values[] = {&invalid.linear.x, &invalid.linear.y, &invalid.linear.z,
-                            &invalid.angular.x, &invalid.angular.y, &invalid.angular.z};
-        *values[axis] = std::numeric_limits<double>::quiet_NaN();
-        node->publishToBaseControlNode(invalid, "cmd_vel");
+        for (const double invalid_value : {
+                 std::numeric_limits<double>::quiet_NaN(),
+                 std::numeric_limits<double>::infinity(),
+                 -std::numeric_limits<double>::infinity()}) {
+            geometry_msgs::msg::Twist invalid;
+            double* values[] = {&invalid.linear.x, &invalid.linear.y, &invalid.linear.z,
+                                &invalid.angular.x, &invalid.angular.y, &invalid.angular.z};
+            *values[axis] = invalid_value;
+            node->publishToBaseControlNode(invalid, "cmd_vel");
+        }
     }
     const auto quiet_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
     while (std::chrono::steady_clock::now() < quiet_until) {
