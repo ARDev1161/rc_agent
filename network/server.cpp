@@ -28,14 +28,21 @@ grpc::Status grpcServer::DataStreamExchange([[maybe_unused]] grpc::ServerContext
         if (!controls_ || !sensors_)
             return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state unavailable");
     }
+    std::shared_ptr<Controls> bound_controls;
+    std::shared_ptr<Sensors> bound_sensors;
+    {
+        std::lock_guard<std::mutex> lock(muServer);
+        bound_controls = controls_;
+        bound_sensors = sensors_;
+    }
     Controls incoming;
     while (stream->Read(&incoming))
     {
         Sensors outgoing;
         {
             std::lock_guard<std::mutex> lock(muServer);
-            if (!controls_ || !sensors_)
-                return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state unavailable");
+            if (!controls_ || !sensors_ || controls_ != bound_controls || sensors_ != bound_sensors)
+                return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state generation changed");
             *controls_ = incoming;
             outgoing = *sensors_;
         }
