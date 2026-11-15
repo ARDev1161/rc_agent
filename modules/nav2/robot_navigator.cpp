@@ -301,11 +301,17 @@ void RobotNavigator::feedbackCallback(
     if (generation != goal_generation_.load()) return;
     auto now = this->now();
 
-    if ((now - last_feedback_time_).seconds() > 0.5) { // Update feedback every half of second
-        {
-            std::lock_guard<std::mutex> lock(feedback_mutex_);
+    // Multiple action callbacks may execute concurrently. Protect both the
+    // throttle check and its timestamp update with the same mutex.
+    bool publish_feedback = false;
+    {
+        std::lock_guard<std::mutex> lock(feedback_mutex_);
+        if ((now - last_feedback_time_).seconds() > 0.5) {
             last_feedback_time_ = now;
+            publish_feedback = true;
         }
+    }
+    if (publish_feedback) {
         
         // Update feedback data with mutex protection
         std::lock_guard<std::mutex> lock(feedback_data_mutex_);
