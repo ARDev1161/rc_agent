@@ -23,6 +23,11 @@ grpc::Status grpcServer::DataStreamExchange([[maybe_unused]] grpc::ServerContext
 {
     // Never hold the shared control mutex across blocking gRPC Read/Write.
     // The ROS control loop must remain able to inspect and update state.
+    {
+        std::lock_guard<std::mutex> lock(muServer);
+        if (!controls_ || !sensors_)
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state unavailable");
+    }
     Controls incoming;
     while (stream->Read(&incoming))
     {
