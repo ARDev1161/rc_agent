@@ -92,6 +92,19 @@ jobs:
             network/client.cpp tests/grpc_client_smoke.cpp $(pkg-config --cflags --libs grpc++ protobuf) \
             -pthread -o generated/rc_client_transport_test
           timeout 20s ./generated/rc_client_transport_test
+      - name: Build and execute real robot-side gRPC server concurrency smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          proto_sources=()
+          for file in generated/*.pb.cc; do
+            [[ "$file" == *.grpc.pb.cc ]] || proto_sources+=("$file")
+          done
+          g++ -std=c++17 -O0 -I. -Igenerated "${proto_sources[@]}" generated/*.grpc.pb.cc \
+            network/server.cpp tests/grpc_server_live_smoke.cpp \
+            $(pkg-config --cflags --libs grpc++ protobuf) -pthread \
+            -o generated/rc_server_live_smoke
+          timeout 15s ./generated/rc_server_live_smoke
 
   config-unit-tests:
     runs-on: ubuntu-22.04
