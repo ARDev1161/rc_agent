@@ -45,6 +45,21 @@ int main() {
         require(status.error_code() == grpc::StatusCode::FAILED_PRECONDITION,
                 "uninitialized streaming exchange did not fail closed");
     }
+    // A client that never writes must not pin a gRPC worker when state is absent.
+    // The server must reject the stream before its first blocking Read().
+    {
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        auto idle = stub->DataStreamExchange(&ctx);
+        Robot::Sensors ignored;
+        const auto started = std::chrono::steady_clock::now();
+        require(!idle->Read(&ignored), "idle uninitialized stream unexpectedly emitted sensors");
+        const auto status = idle->Finish();
+        require(status.error_code() == grpc::StatusCode::FAILED_PRECONDITION,
+                "idle uninitialized stream was not rejected immediately");
+        require(std::chrono::steady_clock::now() - started < std::chrono::seconds(2),
+                "uninitialized stream waited for a client message");
+    }
     auto controls = std::make_shared<Robot::Controls>();
     auto sensors = std::make_shared<Robot::Sensors>();
     sensors->mutable_robot_info()->set_robot_id("robot-test");
