@@ -5,6 +5,7 @@ void grpcServer::setProtosPointers(std::shared_ptr<Controls> controlsPtr, std::s
     std::lock_guard<std::mutex> lock(muServer);
     controls_ = std::move(controlsPtr);
     sensors_ = std::move(sensorsPtr);
+    ++state_generation_;
 }
 
 grpc::Status grpcServer::DataExchange([[maybe_unused]] grpc::ServerContext* context,
@@ -25,6 +26,7 @@ grpc::Status grpcServer::DataStreamExchange([[maybe_unused]] grpc::ServerContext
     // The ROS control loop must remain able to inspect and update state.
     std::shared_ptr<Controls> bound_controls;
     std::shared_ptr<Sensors> bound_sensors;
+    std::uint64_t bound_generation = 0;
     {
         std::lock_guard<std::mutex> lock(muServer);
         // Validate and capture one atomic state generation before blocking Read.
@@ -34,6 +36,7 @@ grpc::Status grpcServer::DataStreamExchange([[maybe_unused]] grpc::ServerContext
             return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state unavailable");
         bound_controls = controls_;
         bound_sensors = sensors_;
+        bound_generation = state_generation_;
     }
     Controls incoming;
     while (stream->Read(&incoming))
@@ -41,7 +44,8 @@ grpc::Status grpcServer::DataStreamExchange([[maybe_unused]] grpc::ServerContext
         Sensors outgoing;
         {
             std::lock_guard<std::mutex> lock(muServer);
-            if (!controls_ || !sensors_ || controls_ != bound_controls || sensors_ != bound_sensors)
+            if (!controls_ || !sensors_ || state_generation_ != bound_generation ||
+                controls_ != bound_controls || sensors_ != bound_sensors)
                 return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state generation changed");
             *controls_ = incoming;
             outgoing = *sensors_;
