@@ -425,3 +425,51 @@ TEST_F(WatchdogDdsTest, NonFiniteLocalVelocityIsRejectedOnConfiguredOutput)
     }
     EXPECT_TRUE(received.empty());
 }
+
+
+TEST_F(WatchdogDdsTest, NonFiniteStampedVelocityIsRejectedOnConfiguredOutput)
+{
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/watchdog_invalid_stamped/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/watchdog_invalid_stamped/cmd_vel"),
+        rclcpp::Parameter("basecontrol.cmd_vel_msg_type", "twist_stamped"),
+        rclcpp::Parameter("basecontrol.cmd_vel_frame_id", "robot_d/base_link")});
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("watchdog_invalid_stamped_observer");
+    std::vector<geometry_msgs::msg::TwistStamped> received;
+    auto sub = observer->create_subscription<geometry_msgs::msg::TwistStamped>(
+        "/watchdog_invalid_stamped/cmd_vel", 10,
+        [&](geometry_msgs::msg::TwistStamped::SharedPtr msg) { received.push_back(*msg); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/watchdog_invalid_stamped/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GT(node->count_subscribers("/watchdog_invalid_stamped/cmd_vel"), 0u);
+
+    for (int axis = 0; axis < 6; ++axis) {
+        for (const double invalid_value : {
+                 std::numeric_limits<double>::quiet_NaN(),
+                 std::numeric_limits<double>::infinity(),
+                 -std::numeric_limits<double>::infinity()}) {
+            geometry_msgs::msg::Twist invalid;
+            double* values[] = {&invalid.linear.x, &invalid.linear.y, &invalid.linear.z,
+                                &invalid.angular.x, &invalid.angular.y, &invalid.angular.z};
+            *values[axis] = invalid_value;
+            node->publishToBaseControlNode(invalid, "cmd_vel");
+        }
+    }
+    const auto quiet_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+    while (std::chrono::steady_clock::now() < quiet_until) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(received.empty());
+}
