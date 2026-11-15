@@ -491,3 +491,52 @@ TEST_F(WatchdogDdsTest, NonFiniteStampedVelocityIsRejectedOnConfiguredOutput)
     }
     EXPECT_TRUE(received.empty());
 }
+
+ 
+// Local ROS publication must preserve SI-valued six-axis velocities exactly.
+// This exercises the configured DDS adapter, NOT remote teleop authorization.
+TEST_F(WatchdogDdsTest, FiniteLocalVelocityPreservesSiUnitsOnConfiguredOutput)
+{
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/watchdog_si/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/watchdog_si/cmd_vel")});
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("watchdog_si_observer");
+    std::vector<geometry_msgs::msg::Twist> received;
+    auto sub = observer->create_subscription<geometry_msgs::msg::Twist>(
+        "/watchdog_si/cmd_vel", 10,
+        [&](geometry_msgs::msg::Twist::SharedPtr msg) { received.push_back(*msg); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/watchdog_si/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GT(node->count_subscribers("/watchdog_si/cmd_vel"), 0u);
+    geometry_msgs::msg::Twist command;
+    command.linear.x = 0.25;
+    command.linear.y = -0.125;
+    command.linear.z = 0.0625;
+    command.angular.x = -0.5;
+    command.angular.y = 0.75;
+    command.angular.z = -1.25;
+    node->publishToBaseControlNode(command, "cmd_vel");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.empty() && std::chrono::steady_clock::now() < deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_DOUBLE_EQ(received.front().linear.x, command.linear.x);
+    EXPECT_DOUBLE_EQ(received.front().linear.y, command.linear.y);
+    EXPECT_DOUBLE_EQ(received.front().linear.z, command.linear.z);
+    EXPECT_DOUBLE_EQ(received.front().angular.x, command.angular.x);
+    EXPECT_DOUBLE_EQ(received.front().angular.y, command.angular.y);
+    EXPECT_DOUBLE_EQ(received.front().angular.z, command.angular.z);
+}
