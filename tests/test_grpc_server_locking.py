@@ -16,8 +16,13 @@ class GrpcServerLocking(unittest.TestCase):
         self.assertIn("while (stream->Read(&incoming))", stream)
         self.assertIn("Sensors outgoing;", stream)
         self.assertIn("std::lock_guard<std::mutex> lock(muServer)", stream)
-        self.assertLess(stream.index("stream->Read(&incoming)"),
-                        stream.index("std::lock_guard<std::mutex> lock(muServer)"))
+        # A short preflight lock before Read is valid; the per-message lock
+        # must start only after the blocking Read has returned.
+        preflight, loop = stream.split("while (stream->Read(&incoming))", 1)
+        self.assertIn("std::lock_guard<std::mutex> lock(muServer)", preflight)
+        self.assertIn("std::lock_guard<std::mutex> lock(muServer)", loop)
+        self.assertLess(loop.index("std::lock_guard<std::mutex> lock(muServer)"),
+                        loop.index("stream->Write(outgoing)"))
         self.assertLess(stream.index("}\\n        if (!stream->Write(outgoing))".replace("\\n", "\n")),
                         stream.index("stream->Write(outgoing)"))
         self.assertNotIn("stream->Read(controls_.get())", stream)
