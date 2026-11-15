@@ -377,3 +377,45 @@ TEST(VelocityGateContract, WrongLeaseAndInvalidTtlFailClosed) {
     EXPECT_FALSE(gate.admit(makeVelocity(2, 500), "session", "other-lease", true, t0 + 1ms));
     EXPECT_TRUE(gate.stopPending(t0 + 2ms));
 }
+
+
+TEST_F(WatchdogDdsTest, NonFiniteLocalVelocityIsRejectedOnConfiguredOutput)
+{
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/watchdog_invalid/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/watchdog_invalid/cmd_vel")});
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("watchdog_invalid_observer");
+    std::vector<geometry_msgs::msg::Twist> received;
+    auto sub = observer->create_subscription<geometry_msgs::msg::Twist>(
+        "/watchdog_invalid/cmd_vel", 10,
+        [&](geometry_msgs::msg::Twist::SharedPtr msg) { received.push_back(*msg); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/watchdog_invalid/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GT(node->count_subscribers("/watchdog_invalid/cmd_vel"), 0u);
+
+    // Check all six axes, including axes unused by a differential-drive robot.
+    for (int axis = 0; axis < 6; ++axis) {
+        geometry_msgs::msg::Twist invalid;
+        double* values[] = {&invalid.linear.x, &invalid.linear.y, &invalid.linear.z,
+                            &invalid.angular.x, &invalid.angular.y, &invalid.angular.z};
+        *values[axis] = std::numeric_limits<double>::quiet_NaN();
+        node->publishToBaseControlNode(invalid, "cmd_vel");
+    }
+    const auto quiet_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+    while (std::chrono::steady_clock::now() < quiet_until) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(received.empty());
+}
