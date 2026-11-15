@@ -33,6 +33,18 @@ int main() {
         require(status.error_code() == grpc::StatusCode::FAILED_PRECONDITION,
                 "uninitialized unary exchange did not fail closed");
     }
+    // An uninitialized streaming exchange must fail closed, just like unary.
+    {
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        auto uninitialized = stub->DataStreamExchange(&ctx);
+        require(uninitialized->Write(request), "uninitialized stream write failed");
+        Robot::Sensors ignored;
+        require(!uninitialized->Read(&ignored), "uninitialized stream emitted sensors");
+        auto status = uninitialized->Finish();
+        require(status.error_code() == grpc::StatusCode::FAILED_PRECONDITION,
+                "uninitialized streaming exchange did not fail closed");
+    }
     auto controls = std::make_shared<Robot::Controls>();
     auto sensors = std::make_shared<Robot::Sensors>();
     sensors->mutable_robot_info()->set_robot_id("robot-test");
@@ -70,6 +82,27 @@ int main() {
         require(false, "idle stream blocked concurrent unary RPC");
     }
     require(concurrent.get(), "concurrent unary RPC failed");
+
+    // Replacing the shared state while the stream is idle must not deadlock
+    // and the next request must observe the new coherent sensor snapshot.
+    auto replacement_controls = std::make_shared<Robot::Controls>();
+    auto replacement_sensors = std::make_shared<Robot::Sensors>();
+    replacement_sensors->mutable_robot_info()->set_robot_id("robot-reconnected");
+    replacement_sensors->mutable_robot_info()->set_api_major(2);
+    auto replace_state = std::async(std::launch::async, [&] {
+        service.setProtosPointers(replacement_controls, replacement_sensors);
+    });
+    if (replace_state.wait_for(std::chrono::milliseconds(1200)) != std::future_status::ready) {
+        stream_ctx.TryCancel();
+        server->Shutdown();
+        require(false, "idle stream blocked transport state replacement");
+    }
+    replace_state.get();
+    require(stream->Write(request), "stream write after state replacement failed");
+    Robot::Sensors replacement_reply;
+    require(stream->Read(&replacement_reply), "stream reply after state replacement missing");
+    require(replacement_reply.robot_info().robot_id() == "robot-reconnected",
+            "stream retained stale sensor state after replacement");
     stream_ctx.TryCancel();
     stream->WritesDone();
     stream->Finish();
