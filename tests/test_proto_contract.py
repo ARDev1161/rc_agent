@@ -105,3 +105,22 @@ class Nav2CompletionSourceContract(unittest.TestCase):
         self.assertNotIn("task_completed_ = true", cancel)
         self.assertNotIn("result_code_ =", cancel)
 
+
+
+class Nav2FeedbackThreadSafetyContract(unittest.TestCase):
+    """Guard the shared feedback throttle timestamp against unlocked reads."""
+
+    def test_feedback_throttle_check_and_update_share_mutex(self):
+        from pathlib import Path
+        source = (Path(__file__).resolve().parents[1] /
+                  "modules/nav2/robot_navigator.cpp").read_text()
+        callback = source.split("void RobotNavigator::feedbackCallback(", 1)[1].split(
+            "void RobotNavigator::resultCallback(", 1)[0]
+        self.assertIn("std::lock_guard<std::mutex> lock(feedback_mutex_)", callback)
+        self.assertIn("if ((now - last_feedback_time_).seconds() > 0.5)", callback)
+        self.assertIn("last_feedback_time_ = now", callback)
+        guarded = callback.split("std::lock_guard<std::mutex> lock(feedback_mutex_)", 1)[1]
+        self.assertLess(guarded.index("if ((now - last_feedback_time_).seconds() > 0.5)"),
+                        guarded.index("last_feedback_time_ = now"))
+        self.assertLess(guarded.index("last_feedback_time_ = now"),
+                        guarded.index("if (publish_feedback)"))
