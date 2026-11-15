@@ -145,8 +145,7 @@ int main() {
         fresh->WritesDone();
         fresh->Finish();
     }
-    stream_ctx.TryCancel();
-    stream->WritesDone();
-    stream->Finish();
+    // The stale stream was already finalized above. gRPC permits exactly one
+    // Finish() per client stream; a second Finish() aborts on older runtimes.
     server->Shutdown();
 }
