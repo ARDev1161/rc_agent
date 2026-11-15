@@ -540,3 +540,23 @@ TEST_F(WatchdogDdsTest, FiniteLocalVelocityPreservesSiUnitsOnConfiguredOutput)
     EXPECT_DOUBLE_EQ(received.front().angular.y, command.angular.y);
     EXPECT_DOUBLE_EQ(received.front().angular.z, command.angular.z);
 }
+
+TEST_F(WatchdogDdsTest, RejectsAliasedVelocityOutputTopics)
+{
+    const auto verify_rejected = [](const std::string& primary,
+                                    const std::string& smoothed,
+                                    const std::string& navigation) {
+        Base::BaseControl controls;
+        std::mutex mutex;
+        rclcpp::NodeOptions options;
+        options.parameter_overrides({
+            rclcpp::Parameter("basecontrol.odom_topic", "/alias_test/odom"),
+            rclcpp::Parameter("basecontrol.cmd_vel_topic", primary),
+            rclcpp::Parameter("basecontrol.cmd_vel_smoothed_topic", smoothed),
+            rclcpp::Parameter("basecontrol.cmd_vel_nav_topic", navigation)});
+        EXPECT_THROW((BaseControlNode(&controls, mutex, options)), std::invalid_argument);
+    };
+    verify_rejected("/alias_test/cmd", "/alias_test/cmd", "/alias_test/nav");
+    verify_rejected("/alias_test/cmd", "/alias_test/smooth", "/alias_test/cmd");
+    verify_rejected("/alias_test/cmd", "/alias_test/aux", "/alias_test/aux");
+}
