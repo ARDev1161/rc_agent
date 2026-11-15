@@ -23,15 +23,15 @@ grpc::Status grpcServer::DataStreamExchange([[maybe_unused]] grpc::ServerContext
 {
     // Never hold the shared control mutex across blocking gRPC Read/Write.
     // The ROS control loop must remain able to inspect and update state.
-    {
-        std::lock_guard<std::mutex> lock(muServer);
-        if (!controls_ || !sensors_)
-            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state unavailable");
-    }
     std::shared_ptr<Controls> bound_controls;
     std::shared_ptr<Sensors> bound_sensors;
     {
         std::lock_guard<std::mutex> lock(muServer);
+        // Validate and capture one atomic state generation before blocking Read.
+        // A separate preflight lock would permit a null state to slip between
+        // validation and binding, leaving an idle stream waiting indefinitely.
+        if (!controls_ || !sensors_)
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state unavailable");
         bound_controls = controls_;
         bound_sensors = sensors_;
     }
