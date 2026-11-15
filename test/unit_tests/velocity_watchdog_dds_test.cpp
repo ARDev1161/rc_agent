@@ -318,6 +318,24 @@ TEST(VelocityGateContract, ExpiryRequiresPublishedStopBeforeNewLease) {
     EXPECT_TRUE(gate.admit(makeVelocity(1, 100), "session-b", "lease-b", true, t0 + 104ms));
 }
 
+// A stale command arriving after TTL expiry must latch a stop even if the
+// periodic watchdog has not yet observed the timeout. Regrant cannot bypass
+// the pending zero publish; no real transport authorization is simulated.
+TEST(VelocityGateContract, LateCommandBeforeWatchdogTickRequiresZeroPublish) {
+    Gate gate;
+    const auto t0 = Gate::Clock::time_point{} + 10s;
+    gate.grant("session-a", "lease-a", t0);
+    ASSERT_TRUE(gate.admit(makeVelocity(1, 100), "session-a", "lease-a", true, t0));
+    EXPECT_FALSE(gate.admit(makeVelocity(2, 100), "session-a", "lease-a", true, t0 + 100ms));
+    EXPECT_TRUE(gate.stopPending(t0 + 101ms));
+    gate.grant("session-b", "lease-b", t0 + 102ms);
+    EXPECT_FALSE(gate.admit(makeVelocity(1, 100), "session-b", "lease-b", true, t0 + 102ms));
+    EXPECT_TRUE(gate.stopPending(t0 + 103ms));
+    gate.acknowledgeStopPublished();
+    gate.grant("session-b", "lease-b", t0 + 104ms);
+    EXPECT_TRUE(gate.admit(makeVelocity(1, 100), "session-b", "lease-b", true, t0 + 104ms));
+}
+
 TEST(VelocityGateContract, ReplayedSequenceRevokesLeaseAndLatchesStop) {
     Gate gate;
     const auto t0 = Gate::Clock::time_point{} + 10s;
