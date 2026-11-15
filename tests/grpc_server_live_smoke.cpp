@@ -113,24 +113,38 @@ int main() {
         require(false, "idle stream blocked transport state replacement");
     }
     replace_state.get();
-    require(stream->Write(request), "stream write after state replacement failed");
+    // A stream belongs to the state generation present when it opened.
+    // It must NOT transfer control authority to a replacement robot.
+    (void)stream->Write(request);
     Robot::Sensors replacement_reply;
-    require(stream->Read(&replacement_reply), "stream reply after state replacement missing");
-    require(replacement_reply.robot_info().robot_id() == "robot-reconnected",
-            "stream retained stale sensor state after replacement");
-    // A reused stream must update only the replacement control state, not the
-    // detached control object from the previous robot/session generation.
-    Robot::Controls second_command;
-    second_command.mutable_light()->set_ledleftpower(73);
-    require(stream->Write(second_command), "replacement control write failed");
-    Robot::Sensors second_reply;
-    require(stream->Read(&second_reply), "replacement control reply missing");
-    require(replacement_controls->light().ledleftpower() == 73,
-            "replacement control state did not receive command");
-    require(controls->light().ledleftpower() == 0,
-            "detached control state received a stale stream command");
-    require(second_reply.robot_info().robot_id() == "robot-reconnected",
-            "replacement control reply used stale robot descriptor");
+    require(!stream->Read(&replacement_reply),
+            "stale stream emitted a reply after robot state replacement");
+    const auto stale_status = stream->Finish();
+    require(stale_status.error_code() == grpc::StatusCode::FAILED_PRECONDITION,
+            "stale stream did not reject the changed robot state generation");
+    require(replacement_controls->light().ledleftpower() == 0,
+            "stale stream changed replacement robot controls");
+
+    // A fresh connection may exchange telemetry and controls with the new state.
+    {
+        grpc::ClientContext fresh_ctx;
+        fresh_ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        auto fresh = stub->DataStreamExchange(&fresh_ctx);
+        Robot::Controls second_command;
+        second_command.mutable_light()->set_ledleftpower(73);
+        require(fresh->Write(second_command), "fresh stream write failed");
+        Robot::Sensors second_reply;
+        require(fresh->Read(&second_reply), "fresh stream reply missing");
+        require(replacement_controls->light().ledleftpower() == 73,
+                "fresh stream did not update replacement control state");
+        require(controls->light().ledleftpower() == 0,
+                "detached robot controls changed after replacement");
+        require(second_reply.robot_info().robot_id() == "robot-reconnected",
+                "fresh stream returned stale robot descriptor");
+        fresh_ctx.TryCancel();
+        fresh->WritesDone();
+        fresh->Finish();
+    }
     stream_ctx.TryCancel();
     stream->WritesDone();
     stream->Finish();
