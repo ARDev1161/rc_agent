@@ -72,6 +72,8 @@ jobs:
         run: |
           sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 update
           sudo apt-get -o Acquire::Retries=5 -o Acquire::http::Timeout=30 install -y g++ pkg-config libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+      - name: Guard gRPC server stream mutex isolation
+        run: python3 -m unittest discover -s tests -p test_grpc_server_locking.py -v
       - name: Generate C++ RPC types
         run: |
           set -euo pipefail
