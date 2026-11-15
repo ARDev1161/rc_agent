@@ -103,6 +103,19 @@ int main() {
     require(stream->Read(&replacement_reply), "stream reply after state replacement missing");
     require(replacement_reply.robot_info().robot_id() == "robot-reconnected",
             "stream retained stale sensor state after replacement");
+    // A reused stream must update only the replacement control state, not the
+    // detached control object from the previous robot/session generation.
+    Robot::Controls second_command;
+    second_command.mutable_light()->set_ledleftpower(73);
+    require(stream->Write(second_command), "replacement control write failed");
+    Robot::Sensors second_reply;
+    require(stream->Read(&second_reply), "replacement control reply missing");
+    require(replacement_controls->light().ledleftpower() == 73,
+            "replacement control state did not receive command");
+    require(controls->light().ledleftpower() == 0,
+            "detached control state received a stale stream command");
+    require(second_reply.robot_info().robot_id() == "robot-reconnected",
+            "replacement control reply used stale robot descriptor");
     stream_ctx.TryCancel();
     stream->WritesDone();
     stream->Finish();
