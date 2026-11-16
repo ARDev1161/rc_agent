@@ -67,7 +67,8 @@ public:
     // has actually accepted the zero-velocity publish operation. A failed
     // publish must never silently unlock a new lease.
     bool stopPending(Clock::time_point now) {
-        if (active_ && has_sequence_ && now >= deadline_) revoke();
+        // A monotonic clock regression is unsafe even without a new command.
+        if (active_ && has_sequence_ && (now < last_accepted_ || now >= deadline_)) revoke();
         return pending_stop_;
     }
     void acknowledgeStopPublished() {
