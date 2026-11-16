@@ -189,6 +189,15 @@ void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& 
         return;
     }
     if (topic.compare("cmd_vel") == 0) {
+        // The public generic publisher has no authenticated v2 session/lease.
+        // It may issue an emergency zero, but must never bypass VelocityGate
+        // to publish motion. A future authorized path must be separate.
+        const bool nonzero = linear.x != 0.0 || linear.y != 0.0 || linear.z != 0.0 ||
+                             angular.x != 0.0 || angular.y != 0.0 || angular.z != 0.0;
+        if (nonzero) {
+            RCLCPP_ERROR(get_logger(), "Rejecting direct cmd_vel motion without v2 lease");
+            return;
+        }
         if (cmd_vel_msg_type_ == "twist_stamped" && cmd_vel_stamped_pub_) {
             geometry_msgs::msg::TwistStamped stamped;
             stamped.header.stamp = this->now();
