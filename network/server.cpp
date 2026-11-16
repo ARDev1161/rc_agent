@@ -8,10 +8,12 @@ void grpcServer::setProtosPointers(std::shared_ptr<Controls> controlsPtr, std::s
     ++state_generation_;
 }
 
-grpc::Status grpcServer::DataExchange([[maybe_unused]] grpc::ServerContext* context,
+grpc::Status grpcServer::DataExchange(grpc::ServerContext* context,
                                       const Controls* request, Sensors* reply)
 {
     std::lock_guard<std::mutex> lock(muServer);
+    if (context->IsCancelled())
+        return grpc::Status(grpc::StatusCode::CANCELLED, "client disconnected");
     if (!controls_ || !sensors_)
         return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state unavailable");
     *controls_ = *request;
@@ -19,7 +21,7 @@ grpc::Status grpcServer::DataExchange([[maybe_unused]] grpc::ServerContext* cont
     return grpc::Status::OK;
 }
 
-grpc::Status grpcServer::DataStreamExchange([[maybe_unused]] grpc::ServerContext* context,
+grpc::Status grpcServer::DataStreamExchange(grpc::ServerContext* context,
                                             grpc::ServerReaderWriter<Sensors, Controls>* stream)
 {
     // Never hold the shared control mutex across blocking gRPC Read/Write.
@@ -44,6 +46,8 @@ grpc::Status grpcServer::DataStreamExchange([[maybe_unused]] grpc::ServerContext
         Sensors outgoing;
         {
             std::lock_guard<std::mutex> lock(muServer);
+            if (context->IsCancelled())
+                return grpc::Status(grpc::StatusCode::CANCELLED, "client disconnected");
             if (!controls_ || !sensors_ || state_generation_ != bound_generation ||
                 controls_ != bound_controls || sensors_ != bound_sensors)
                 return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state generation changed");
