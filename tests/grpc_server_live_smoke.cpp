@@ -145,6 +145,33 @@ int main() {
         fresh->WritesDone();
         fresh->Finish();
     }
+    // A cancelled RPC must not prevent a new stream from using current state.
+    {
+        grpc::ClientContext cancelled_ctx;
+        cancelled_ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        auto cancelled = stub->DataStreamExchange(&cancelled_ctx);
+        Robot::Controls initial;
+        initial.mutable_light()->set_ledleftpower(44);
+        require(cancelled->Write(initial), "cancelled stream initial write failed");
+        Robot::Sensors initial_reply;
+        require(cancelled->Read(&initial_reply), "cancelled stream initial reply missing");
+        cancelled_ctx.TryCancel();
+        require(!cancelled->Finish().ok(), "cancelled stream unexpectedly completed normally");
+        require(replacement_controls->light().ledleftpower() == 44,
+                "cancelled stream corrupted last accepted control snapshot");
+        grpc::ClientContext next_ctx;
+        next_ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        auto next = stub->DataStreamExchange(&next_ctx);
+        Robot::Controls next_command;
+        next_command.mutable_light()->set_ledleftpower(45);
+        require(next->Write(next_command), "post-cancellation stream write failed");
+        Robot::Sensors next_reply;
+        require(next->Read(&next_reply), "post-cancellation stream reply missing");
+        require(replacement_controls->light().ledleftpower() == 45,
+                "post-cancellation stream did not update current control state");
+        next->WritesDone();
+        require(next->Finish().ok(), "post-cancellation stream failed to finish");
+    }
     // Rebinding identical shared pointers is still a new transport generation.
     // A reconnect must revoke old streams even when ROS reused its state objects.
     {
