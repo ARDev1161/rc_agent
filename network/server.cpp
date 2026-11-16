@@ -69,8 +69,15 @@ grpc::Status grpcServer::DataStreamExchange(grpc::ServerContext* context,
             *controls_ = incoming;
             outgoing = *sensors_;
         }
-        if (!stream->Write(outgoing))
+        if (!stream->Write(outgoing)) {
+            // A cancelled transport must not report a successful stream close.
+            // A graceful client half-close remains OK.
+            if (context->IsCancelled())
+                return grpc::Status(grpc::StatusCode::CANCELLED, "client disconnected");
             break;
+        }
     }
+    if (context->IsCancelled())
+        return grpc::Status(grpc::StatusCode::CANCELLED, "client disconnected");
     return grpc::Status::OK;
 }
