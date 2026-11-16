@@ -72,6 +72,49 @@ int main() {
         require(reply.robot_info().robot_id() == "robot-test", "snapshot lost robot id");
     }
 
+    // Generic RPCs must not bypass v2 session/lease checks with BaseControl.
+    // Verify rejection leaves the previous control snapshot untouched.
+    {
+        Robot::Controls unauthorized;
+        unauthorized.mutable_basecontrol()->set_linearvelocity(0.25);
+        grpc::ClientContext ctx;
+        Robot::Sensors ignored;
+        const auto status = stub->DataExchange(&ctx, unauthorized, &ignored);
+        require(status.error_code() == grpc::StatusCode::PERMISSION_DENIED,
+                "unary RPC accepted motion without a v2 lease");
+        require(controls->basecontrol().linearvelocity() == 0.0,
+                "unary rejected motion mutated controls");
+    }
+    {
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        auto unauthorized_stream = stub->DataStreamExchange(&ctx);
+        Robot::Controls unauthorized;
+        unauthorized.mutable_basecontrol()->set_angularvelocity(-0.4);
+        require(unauthorized_stream->Write(unauthorized),
+                "unauthorized stream write failed");
+        Robot::Sensors ignored;
+        require(!unauthorized_stream->Read(&ignored),
+                "unauthorized motion stream emitted a successful reply");
+        const auto status = unauthorized_stream->Finish();
+        require(status.error_code() == grpc::StatusCode::PERMISSION_DENIED,
+                "stream RPC accepted motion without a v2 lease");
+        require(controls->basecontrol().angularvelocity() == 0.0,
+                "stream rejected motion mutated controls");
+    }
+    // A zero-velocity control and non-motion auxiliary command remain usable.
+    {
+        Robot::Controls safe;
+        safe.mutable_basecontrol()->set_linearvelocity(0.0);
+        safe.mutable_light()->set_ledleftpower(12);
+        grpc::ClientContext ctx;
+        Robot::Sensors ignored;
+        require(stub->DataExchange(&ctx, safe, &ignored).ok(),
+                "safe zero-velocity controls were rejected");
+        require(controls->light().ledleftpower() == 12,
+                "safe auxiliary controls were lost");
+    }
+
     grpc::ClientContext stream_ctx;
     stream_ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(5));
     auto stream = stub->DataStreamExchange(&stream_ctx);
