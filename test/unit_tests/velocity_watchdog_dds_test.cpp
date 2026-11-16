@@ -560,3 +560,52 @@ TEST_F(WatchdogDdsTest, RejectsAliasedVelocityOutputTopics)
     verify_rejected("/alias_test/cmd", "/alias_test/smooth", "/alias_test/cmd");
     verify_rejected("/alias_test/cmd", "/alias_test/aux", "/alias_test/aux");
 }
+
+
+TEST_F(WatchdogDdsTest, DirectCmdVelCannotBypassLease)
+{
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/direct_guard/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/direct_guard/cmd_vel")});
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("direct_guard_observer");
+    std::vector<geometry_msgs::msg::Twist> received;
+    auto sub = observer->create_subscription<geometry_msgs::msg::Twist>(
+        "/direct_guard/cmd_vel", 10,
+        [&](geometry_msgs::msg::Twist::SharedPtr msg) { received.push_back(*msg); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/direct_guard/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GT(node->count_subscribers("/direct_guard/cmd_vel"), 0u);
+
+    geometry_msgs::msg::Twist unauthorized;
+    unauthorized.linear.x = 0.25; // SI m/s, but no session/lease
+    node->publishToBaseControlNode(unauthorized, "cmd_vel");
+    const auto quiet_until = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+    while (std::chrono::steady_clock::now() < quiet_until) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(received.empty()) << "unauthorized direct motion reached DDS";
+
+    // Emergency zero is still allowed through the generic output path.
+    geometry_msgs::msg::Twist zero;
+    node->publishToBaseControlNode(zero, "cmd_vel");
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (received.empty() && std::chrono::steady_clock::now() < deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_EQ(received.size(), 1u);
+    EXPECT_DOUBLE_EQ(received.front().linear.x, 0.0);
+    EXPECT_DOUBLE_EQ(received.front().angular.z, 0.0);
+}
