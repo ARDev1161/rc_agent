@@ -177,7 +177,7 @@ int NetworkController::runClient(bool tryConnectToUnverified)
 
 int NetworkController::runServer(std::string &address_mask)
 {
-    std::thread thr([&]()
+    std::thread thr([this, address_mask]()
      {
       grpc::EnableDefaultHealthCheckService(true);
       grpc::reflection::InitProtoReflectionServerBuilderPlugin();
