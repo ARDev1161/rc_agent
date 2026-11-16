@@ -4,6 +4,8 @@
 #include <chrono>
 #include <future>
 #include <memory>
+#include <limits>
+#include <initializer_list>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -101,6 +103,20 @@ int main() {
                 "stream RPC accepted motion without a v2 lease");
         require(controls->basecontrol().angularvelocity() == 0.0,
                 "stream rejected motion mutated controls");
+    }
+    // Non-finite velocity values are not zero and must never bypass the
+    // unauthenticated generic RPC guard (NaN comparisons need special care).
+    for (double invalid : {std::numeric_limits<double>::quiet_NaN(),
+                           std::numeric_limits<double>::infinity()}) {
+        Robot::Controls unsafe;
+        unsafe.mutable_basecontrol()->set_linearvelocity(invalid);
+        grpc::ClientContext ctx;
+        Robot::Sensors ignored;
+        const auto status = stub->DataExchange(&ctx, unsafe, &ignored);
+        require(status.error_code() == grpc::StatusCode::PERMISSION_DENIED,
+                "non-finite unary velocity bypassed lease guard");
+        require(controls->basecontrol().linearvelocity() == 0.0,
+                "rejected non-finite velocity changed controls");
     }
     // A zero-velocity control and non-motion auxiliary command remain usable.
     {
