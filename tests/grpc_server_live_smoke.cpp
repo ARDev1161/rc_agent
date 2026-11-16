@@ -113,6 +113,10 @@ int main() {
                 "safe zero-velocity controls were rejected");
         require(controls->light().ledleftpower() == 12,
                 "safe auxiliary controls were lost");
+        Robot::Controls reset;
+        grpc::ClientContext reset_ctx;
+        require(stub->DataExchange(&reset_ctx, reset, &ignored).ok(),
+                "failed to reset safe auxiliary controls");
     }
 
     grpc::ClientContext stream_ctx;
