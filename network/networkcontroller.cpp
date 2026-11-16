@@ -194,6 +194,11 @@ int NetworkController::runServer(std::string &address_mask)
 
       // Finally assemble the server.
       std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+      if (!server) {
+          // A failed bind must not dereference a null server in the detached worker.
+          std::cerr << "Failed to start gRPC server on " << address_mask << std::endl;
+          return;
+      }
       std::cout << "Server listening on " << address_mask << std::endl;
 
       // Wait for the server to shutdown. Note that some other thread must be
