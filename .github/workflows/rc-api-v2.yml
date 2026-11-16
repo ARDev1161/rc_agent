@@ -145,6 +145,9 @@ jobs:
             ros-humble-sensor-msgs ros-humble-std-msgs ros-humble-lifecycle-msgs ros-humble-action-msgs \
             libboost-system-dev libconfig++-dev nlohmann-json3-dev \
             libgrpc++-dev libprotobuf-dev protobuf-compiler protobuf-compiler-grpc
+      - name: Guard detached gRPC server bind-address lifetime
+        shell: bash
+        run: python3 -m unittest discover -s tests -p test_networkcontroller_lifetime.py -v
       - name: Check Nav2 lifecycle source regressions
         shell: bash
         run: python3 -m unittest discover -s tests -p test_nav2_goal_lifecycle.py -v
