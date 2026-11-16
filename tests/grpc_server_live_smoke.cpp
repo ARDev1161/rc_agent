@@ -209,7 +209,9 @@ int main() {
         Robot::Controls cancelled_command;
         cancelled_command.mutable_light()->set_ledleftpower(99);
         (void)cancelled->Write(cancelled_command);
-        require(!cancelled->Finish().ok(), "cancelled stream unexpectedly completed normally");
+        const auto cancelled_status = cancelled->Finish();
+        require(cancelled_status.error_code() == grpc::StatusCode::CANCELLED,
+                "cancelled stream did not report CANCELLED");
         require(replacement_controls->light().ledleftpower() == 44,
                 "cancelled stream corrupted last accepted control snapshot");
         grpc::ClientContext next_ctx;
