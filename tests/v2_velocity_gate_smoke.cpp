@@ -1,6 +1,7 @@
 #include "network/v2_velocity_gate.h"
 #include <chrono>
 #include <stdexcept>
+#include <limits>
 using rc::api::v2::VelocityGate;
 using rc::api::v2::Velocity;
 using namespace std::chrono_literals;
@@ -44,4 +45,29 @@ int main() {
     check(!gate.admit(command(2), "disconnect", "l3", true, t + 201ms), "stale session accepted");
     gate.acknowledgeStopPublished();
     check(!gate.stopPending(t + 501ms), "acknowledged stop still pending");
+    // Boundary conditions: fail closed on invalid numerical payloads and clocks.
+    gate.grant("numeric", "lease", t + 600ms);
+    auto nan_velocity = command();
+    nan_velocity.mutable_linear()->set_x(std::numeric_limits<double>::quiet_NaN());
+    check(!gate.admit(nan_velocity, "numeric", "lease", true, t + 600ms), "NaN linear velocity accepted");
+    gate.grant("numeric", "lease", t + 601ms);
+    auto inf_velocity = command();
+    inf_velocity.mutable_angular()->set_z(std::numeric_limits<double>::infinity());
+    check(!gate.admit(inf_velocity, "numeric", "lease", true, t + 601ms), "infinite angular velocity accepted");
+    gate.grant("numeric", "lease", t + 602ms);
+    auto long_ttl = command();
+    long_ttl.set_valid_for_ms(1001);
+    check(!gate.admit(long_ttl, "numeric", "lease", true, t + 602ms), "oversized TTL accepted");
+    gate.grant("numeric", "lease", t + 603ms);
+    auto no_frame = command();
+    no_frame.clear_frame_id();
+    check(!gate.admit(no_frame, "numeric", "lease", true, t + 603ms), "missing frame accepted");
+    gate.grant("numeric", "lease", t + 604ms);
+    check(!gate.admit(command(), "numeric", "lease", true, t + 603ms), "clock before grant accepted");
+    gate.grant("numeric", "lease", t + 605ms);
+    check(gate.admit(command(), "numeric", "lease", true, t + 605ms), "boundary setup failed");
+    check(!gate.admit(command(2), "numeric", "lease", true, t + 604ms), "rewound clock accepted");
+    check(gate.stopPending(t + 606ms), "rewound clock did not latch stop");
+    gate.acknowledgeStopPublished();
+
 }
