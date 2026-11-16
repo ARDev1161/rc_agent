@@ -495,7 +495,7 @@ TEST_F(WatchdogDdsTest, NonFiniteStampedVelocityIsRejectedOnConfiguredOutput)
  
 // Local ROS publication must preserve SI-valued six-axis velocities exactly.
 // This exercises the configured DDS adapter, NOT remote teleop authorization.
-TEST_F(WatchdogDdsTest, FiniteLocalVelocityPreservesSiUnitsOnConfiguredOutput)
+TEST_F(WatchdogDdsTest, GenericLocalVelocityCannotBypassLease)
 {
     Base::BaseControl controls;
     std::mutex mutex;
@@ -526,19 +526,30 @@ TEST_F(WatchdogDdsTest, FiniteLocalVelocityPreservesSiUnitsOnConfiguredOutput)
     command.angular.x = -0.5;
     command.angular.y = 0.75;
     command.angular.z = -1.25;
+    // The generic publisher has no authenticated v2 lease. Reject all six
+    // nonzero SI components; an explicit zero-stop must still reach DDS.
     node->publishToBaseControlNode(command, "cmd_vel");
+    const auto reject_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(350);
+    while (std::chrono::steady_clock::now() < reject_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_TRUE(received.empty());
+
+    geometry_msgs::msg::Twist zero;
+    node->publishToBaseControlNode(zero, "cmd_vel");
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (received.empty() && std::chrono::steady_clock::now() < deadline) {
         executor.spin_some();
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     ASSERT_EQ(received.size(), 1u);
-    EXPECT_DOUBLE_EQ(received.front().linear.x, command.linear.x);
-    EXPECT_DOUBLE_EQ(received.front().linear.y, command.linear.y);
-    EXPECT_DOUBLE_EQ(received.front().linear.z, command.linear.z);
-    EXPECT_DOUBLE_EQ(received.front().angular.x, command.angular.x);
-    EXPECT_DOUBLE_EQ(received.front().angular.y, command.angular.y);
-    EXPECT_DOUBLE_EQ(received.front().angular.z, command.angular.z);
+    EXPECT_DOUBLE_EQ(received.front().linear.x, 0.0);
+    EXPECT_DOUBLE_EQ(received.front().linear.y, 0.0);
+    EXPECT_DOUBLE_EQ(received.front().linear.z, 0.0);
+    EXPECT_DOUBLE_EQ(received.front().angular.x, 0.0);
+    EXPECT_DOUBLE_EQ(received.front().angular.y, 0.0);
+    EXPECT_DOUBLE_EQ(received.front().angular.z, 0.0);
 }
 
 TEST_F(WatchdogDdsTest, RejectsAliasedVelocityOutputTopics)
