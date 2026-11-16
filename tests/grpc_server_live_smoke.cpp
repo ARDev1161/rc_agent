@@ -156,6 +156,12 @@ int main() {
         Robot::Sensors initial_reply;
         require(cancelled->Read(&initial_reply), "cancelled stream initial reply missing");
         cancelled_ctx.TryCancel();
+        // A client may have a buffered write when cancellation races with Read.
+        // Once cancellation is observed by the server, no later control snapshot
+        // may be applied; this attempt must not be treated as a new authority.
+        Robot::Controls cancelled_command;
+        cancelled_command.mutable_light()->set_ledleftpower(99);
+        (void)cancelled->Write(cancelled_command);
         require(!cancelled->Finish().ok(), "cancelled stream unexpectedly completed normally");
         require(replacement_controls->light().ledleftpower() == 44,
                 "cancelled stream corrupted last accepted control snapshot");
