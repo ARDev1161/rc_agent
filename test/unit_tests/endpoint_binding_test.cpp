@@ -189,8 +189,7 @@ TEST_F(EndpointBindingTest, TwoProfilesKeepVelocityPublishersIsolated)
     ASSERT_GT(node_a->count_subscribers("/velocity_a/cmd_vel"), 0u);
     ASSERT_GT(node_b->count_subscribers("/velocity_b/cmd_vel"), 0u);
 
-    Twist command_a;
-    command_a.linear.x = 0.11;
+    Twist command_a; // Only an explicit zero stop may use the generic publisher.
     node_a->publishToBaseControlNode(command_a, "cmd_vel");
     const auto first_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (received_a.empty() && std::chrono::steady_clock::now() < first_deadline) {
@@ -198,11 +197,10 @@ TEST_F(EndpointBindingTest, TwoProfilesKeepVelocityPublishersIsolated)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     ASSERT_EQ(received_a.size(), 1u);
-    EXPECT_DOUBLE_EQ(received_a.front(), 0.11);
+    EXPECT_DOUBLE_EQ(received_a.front(), 0.0);
     EXPECT_TRUE(received_b.empty());
 
     Twist command_b;
-    command_b.linear.x = -0.22;
     node_b->publishToBaseControlNode(command_b, "cmd_vel");
     const auto second_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (received_b.empty() && std::chrono::steady_clock::now() < second_deadline) {
@@ -210,7 +208,7 @@ TEST_F(EndpointBindingTest, TwoProfilesKeepVelocityPublishersIsolated)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     ASSERT_EQ(received_b.size(), 1u);
-    EXPECT_DOUBLE_EQ(received_b.front(), -0.22);
+    EXPECT_DOUBLE_EQ(received_b.front(), 0.0);
     EXPECT_EQ(received_a.size(), 1u);
 }
 
@@ -265,9 +263,7 @@ TEST_F(EndpointBindingTest, NonFiniteSixAxisVelocityCannotReachRos)
     }
     EXPECT_TRUE(received.empty());
 
-    Twist valid;
-    valid.linear.x = 0.125;
-    valid.angular.z = -0.25;
+    Twist valid; // Explicit stop remains available after malformed commands.
     node->publishToBaseControlNode(valid, "cmd_vel");
     const auto delivery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (received.empty() && std::chrono::steady_clock::now() < delivery_deadline) {
@@ -275,8 +271,8 @@ TEST_F(EndpointBindingTest, NonFiniteSixAxisVelocityCannotReachRos)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     ASSERT_EQ(received.size(), 1u);
-    EXPECT_DOUBLE_EQ(received.front().linear.x, 0.125);
-    EXPECT_DOUBLE_EQ(received.front().angular.z, -0.25);
+    EXPECT_DOUBLE_EQ(received.front().linear.x, 0.0);
+    EXPECT_DOUBLE_EQ(received.front().angular.z, 0.0);
 }
 
 
@@ -390,6 +386,15 @@ TEST_F(EndpointBindingTest, SixAxisVelocityPreservesPhysicalUnits)
     command.angular.y = 0.625;
     command.angular.z = -0.8125;
     node->publishToBaseControlNode(command, "cmd_vel");
+    // The generic publisher is unauthenticated: even finite SI motion must be rejected.
+    const auto rejection_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(350);
+    while (std::chrono::steady_clock::now() < rejection_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(received.empty());
+    command = Twist{};
+    node->publishToBaseControlNode(command, "cmd_vel");
     const auto delivery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (received.empty() && std::chrono::steady_clock::now() < delivery_deadline) {
         executor.spin_some();
@@ -457,7 +462,6 @@ TEST_F(EndpointBindingTest, MixedVelocityMessageTypesRemainIsolated)
     ASSERT_GT(node_b->count_subscribers("/mixed_b/cmd_vel"), 0u);
 
     Twist a;
-    a.linear.x = 0.17;
     node_a->publishToBaseControlNode(a, "cmd_vel");
     const auto first_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (received_a.empty() && std::chrono::steady_clock::now() < first_deadline) {
@@ -465,12 +469,10 @@ TEST_F(EndpointBindingTest, MixedVelocityMessageTypesRemainIsolated)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     ASSERT_EQ(received_a.size(), 1u);
-    EXPECT_DOUBLE_EQ(received_a.front().linear.x, 0.17);
+    EXPECT_DOUBLE_EQ(received_a.front().linear.x, 0.0);
     EXPECT_TRUE(received_b.empty());
 
     Twist b;
-    b.linear.x = -0.29;
-    b.angular.z = 0.31;
     node_b->publishToBaseControlNode(b, "cmd_vel");
     const auto second_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (received_b.empty() && std::chrono::steady_clock::now() < second_deadline) {
@@ -480,8 +482,8 @@ TEST_F(EndpointBindingTest, MixedVelocityMessageTypesRemainIsolated)
     ASSERT_EQ(received_b.size(), 1u);
     EXPECT_EQ(received_b.front().header.frame_id, "robot_b/base_link");
     EXPECT_GT(received_b.front().header.stamp.sec, 0);
-    EXPECT_DOUBLE_EQ(received_b.front().twist.linear.x, -0.29);
-    EXPECT_DOUBLE_EQ(received_b.front().twist.angular.z, 0.31);
+    EXPECT_DOUBLE_EQ(received_b.front().twist.linear.x, 0.0);
+    EXPECT_DOUBLE_EQ(received_b.front().twist.angular.z, 0.0);
     EXPECT_EQ(received_a.size(), 1u);
 }
 
@@ -528,14 +530,22 @@ TEST_F(EndpointBindingTest, UnknownVelocitySelectorCannotPublish)
     }
     EXPECT_TRUE(received.empty());
 
+    // A configured selector still cannot bypass the unauthenticated motion guard.
     node->publishToBaseControlNode(command, "cmd_vel");
+    const auto blocked_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(350);
+    while (std::chrono::steady_clock::now() < blocked_deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    EXPECT_TRUE(received.empty());
+    node->publishToBaseControlNode(Twist{}, "cmd_vel");
     const auto delivery_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (received.empty() && std::chrono::steady_clock::now() < delivery_deadline) {
         executor.spin_some();
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     ASSERT_EQ(received.size(), 1u);
-    EXPECT_DOUBLE_EQ(received.front(), 0.42);
+    EXPECT_DOUBLE_EQ(received.front(), 0.0);
 }
 
 
@@ -730,8 +740,7 @@ TEST_F(EndpointBindingTest, NonfiniteVelocityCommandsAreNotPublished)
     EXPECT_TRUE(smooth_received.empty());
     EXPECT_TRUE(nav_received.empty());
 
-    Twist valid;
-    valid.linear.x = 0.21;
+    Twist valid; // Zero stop is the only generic cmd_vel command permitted.
     node->publishToBaseControlNode(valid, "cmd_vel");
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (main_received.empty() && std::chrono::steady_clock::now() < deadline) {
@@ -739,7 +748,7 @@ TEST_F(EndpointBindingTest, NonfiniteVelocityCommandsAreNotPublished)
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     ASSERT_EQ(main_received.size(), 1u);
-    EXPECT_DOUBLE_EQ(main_received.front(), 0.21);
+    EXPECT_DOUBLE_EQ(main_received.front(), 0.0);
     EXPECT_TRUE(smooth_received.empty());
     EXPECT_TRUE(nav_received.empty());
 }
@@ -804,8 +813,6 @@ TEST_F(EndpointBindingTest, NonFiniteStampedVelocityCannotReachRos)
     EXPECT_TRUE(received.empty());
 
     Twist valid;
-    valid.linear.x = -0.125;
-    valid.angular.z = 0.375;
     node->publishToBaseControlNode(valid, "cmd_vel");
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
     while (received.empty() && std::chrono::steady_clock::now() < deadline) {
@@ -814,8 +821,8 @@ TEST_F(EndpointBindingTest, NonFiniteStampedVelocityCannotReachRos)
     }
     ASSERT_EQ(received.size(), 1u);
     EXPECT_EQ(received.front().header.frame_id, "stamped_guard/base_link");
-    EXPECT_DOUBLE_EQ(received.front().twist.linear.x, -0.125);
-    EXPECT_DOUBLE_EQ(received.front().twist.angular.z, 0.375);
+    EXPECT_DOUBLE_EQ(received.front().twist.linear.x, 0.0);
+    EXPECT_DOUBLE_EQ(received.front().twist.angular.z, 0.0);
 }
 
 // v2-only safety: obsolete protobuf BaseControl must not automatically
