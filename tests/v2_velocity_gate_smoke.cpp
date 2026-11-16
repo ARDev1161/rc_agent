@@ -2,6 +2,7 @@
 #include <chrono>
 #include <stdexcept>
 #include <limits>
+#include <thread>
 using rc::api::v2::VelocityGate;
 using rc::api::v2::Velocity;
 using namespace std::chrono_literals;
@@ -84,4 +85,28 @@ int main() {
     gate.revoke();
     check(gate.stopPending(t + 704ms), "recovered motion did not require stop");
     gate.acknowledgeStopPublished();
+    // Transport callbacks and the ROS wall-timer run on independent threads.
+    // Concurrent revoke/grant/watchdog must not race on gate state.
+    VelocityGate concurrent;
+    const auto tick = t + 2s;
+    std::thread transport([&] {
+        for (int i = 0; i < 1000; ++i) {
+            concurrent.grant("session", "lease", tick);
+            concurrent.admit(command(static_cast<unsigned>(i + 1)), "session", "lease", true, tick);
+            concurrent.revoke();
+        }
+    });
+    std::thread watchdog([&] {
+        for (int i = 0; i < 1000; ++i) {
+            if (concurrent.stopPending(tick + 101ms))
+                concurrent.acknowledgeStopPublished();
+        }
+    });
+    transport.join();
+    watchdog.join();
+    concurrent.revoke();
+    if (concurrent.stopPending(tick + 101ms))
+        concurrent.acknowledgeStopPublished();
+    check(!concurrent.stopPending(tick + 102ms), "concurrent stop did not drain");
+
 }
