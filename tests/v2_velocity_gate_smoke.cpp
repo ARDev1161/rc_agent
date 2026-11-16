@@ -70,4 +70,18 @@ int main() {
     check(gate.stopPending(t + 606ms), "rewound clock did not latch stop");
     gate.acknowledgeStopPublished();
 
+    // A watchdog tick itself must fail closed if monotonic time regresses,
+    // even when no subsequent network command arrives.
+    gate.grant("watchdog-rollback", "lease", t + 700ms);
+    check(gate.admit(command(), "watchdog-rollback", "lease", true, t + 700ms), "watchdog rollback setup failed");
+    check(gate.stopPending(t + 699ms), "watchdog clock rollback did not latch stop");
+    check(gate.stopPending(t + 701ms), "watchdog rollback stop lost before publish");
+    gate.grant("bypass", "lease", t + 702ms);
+    check(!gate.admit(command(), "bypass", "lease", true, t + 702ms), "watchdog rollback stop bypassed");
+    gate.acknowledgeStopPublished();
+    gate.grant("recovered", "lease", t + 703ms);
+    check(gate.admit(command(), "recovered", "lease", true, t + 703ms), "post-stop recovery failed");
+    gate.revoke();
+    check(gate.stopPending(t + 704ms), "recovered motion did not require stop");
+    gate.acknowledgeStopPublished();
 }
