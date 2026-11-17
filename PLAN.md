@@ -1388,3 +1388,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - rc_agent [2fe23c0c](https://github.com/ARDev1161/rc_agent/commit/2fe23c0c6fed0b915bf7265ea781ea1e4b312d35) adds real localhost gRPC stream regression: NaN and negative infinity angular velocity must return PERMISSION_DENIED without changing shared Controls. Complements existing unary non-finite tests. No production authorization path or shared protobuf changed; v2 remote motion stays disabled.
 - Prior exact-HEAD Actions SUCCESS: rc_agent cb44faad [#44010467410](https://github.com/ARDev1161/rc_agent/actions/runs/44010467410), AmurCore abb50eaa [#44010473785](https://github.com/ARDev1161/AmurCore/actions/runs/44010473785). These runs do NOT validate the new test. Local ROS2/Qt5/Gazebo/physical tests NOT RUN. Verify CI on the new HEAD before claiming PASS.
 - P1 ACCEPTANCE PENDING, P2 owner-authorized IN PROGRESS. Next critical work: authenticated gRPC/session/lease/disconnect -> VelocityGate -> ROS2 DDS zero-stop; TLS/auth architecture remains an explicit decision gate. No merges to default or documentation branches.
+
+
+## Handoff — 2026-11-17, transport shutdown state invalidation
+- AmurCore [bcf3cdb0](https://github.com/ARDev1161/AmurCore/commit/bcf3cdb03929952ffca41049e393241f2695c784): cancelled gRPC DataStreamExchange no longer reports successful completion at stream EOF.
+- rc_agent [963758ee](https://github.com/ARDev1161/rc_agent/commit/963758ee2552697ffbd39d41d0c0f34bfd2cf6ee): stopStream invalidates the last cached operator Controls before cancelling active RPCs; this does NOT publish motion or enable remote teleop.
+- P1 ACCEPTANCE PENDING; P2 IN PROGRESS. Shared proto unchanged; no default/docs branch merges. Local Qt5/ROS2/Gazebo/hardware NOT RUN; inspect GitHub Actions on final PLAN HEAD before reporting CI success.
+- Next: prioritize actual authenticated v2 command/session/lease integration with ROS2 DDS watchdog and SI-unit AmurCore client. Add only essential motion/stop/authorization regression; do not proliferate transport edge-case tests.
