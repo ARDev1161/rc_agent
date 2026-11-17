@@ -1438,3 +1438,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - AmurCore [54892f52](https://github.com/ARDev1161/AmurCore/commit/54892f523d83aa13f546294ab84307291d162e24), [ff2b7527](https://github.com/ARDev1161/AmurCore/commit/ff2b752724a6488d6ba2661b60efa7b6d0cdc190): update existing smoke expectations to zero velocity. rc_agent [129f3f4e](https://github.com/ARDev1161/rc_agent/commit/129f3f4ef10c618a59e2f4ddf21a5e31a59fc7a9): existing disconnect/cancel assertions now require cleared controls. No new test framework.
 - P1 manual ACCEPTANCE PENDING; P2 owner-authorized IN PROGRESS. No protobuf changes or merges. Local Qt5/ROS2/Gazebo/hardware NOT RUN. **CI on final PLAN HEAD not yet verified; do not claim green.**
 - Next: integrate authenticated v2 RPC/session/lease with this private DDS method and AmurCore SI joystick sender, ensure watchdog zero and minimal motion/stop smoke. Keep documentation isolated on documentation branches.
+
+
+## Handoff — 2026-11-17, failed stream/DDS delivery
+- AmurCore [`bf304a7f`](https://github.com/ARDev1161/AmurCore/commit/bf304a7f5e844d78edbd8ac7db6ad49b4f186ad4): DataStreamExchange now returns UNAVAILABLE on failed control write rather than success, preserving CANCELLED for cancelled clients.
+- rc_agent [`0a050b78`](https://github.com/ARDev1161/rc_agent/commit/0a050b78b7dc208a614fe467c13c110c5b2ecb83): failed leased DDS publisher paths immediately attempt latched watchdog zero after lease revoke; periodic timer remains fallback. This does not authorize new motion.
+- P1 manual acceptance pending, P2 owner-authorized in progress; no shared proto changes, no merge. Local Qt5/ROS2/Gazebo/hardware NOT RUN; exact new HEAD CI must be inspected (no green inference from old SHA).
+- Next production priority: authenticated v2 gRPC session/lease + AmurCore SI joystick sender -> BaseControlNode publishLeasedVelocity, then minimum motion/zero-stop integration smoke. No new test framework.
