@@ -201,6 +201,7 @@ void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& 
         // Emergency zero revokes the active lease; acknowledge only after DDS publish.
         velocity_gate_.revoke();
         bool stop_published = false;
+        try {
         if (cmd_vel_msg_type_ == "twist_stamped" && cmd_vel_stamped_pub_) {
             geometry_msgs::msg::TwistStamped stamped;
             stamped.header.stamp = this->now();
@@ -215,6 +216,10 @@ void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& 
         // The zero was successfully handed to DDS; clear the stop latch.
         // Keep it latched if publishing throws or no publisher is available.
         if (stop_published) velocity_gate_.acknowledgeStopPublished();
+        } catch (const std::exception& e) {
+            // Keep the stop latched; the watchdog will retry on its next tick.
+            RCLCPP_ERROR(get_logger(), "Emergency zero DDS publish failed: %s", e.what());
+        }
     } else if (topic.compare("cmd_vel_smoothed") == 0) {
         cmd_vel_smoothed_pub_->publish(twist_msg);
     } else if (topic.compare("cmd_vel_unsafety") == 0) {
