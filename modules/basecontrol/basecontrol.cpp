@@ -204,12 +204,14 @@ void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& 
             stamped.header.frame_id = cmd_vel_frame_id_;
             stamped.twist = twist_msg;
             cmd_vel_stamped_pub_->publish(stamped);
+            stop_published = true;
         } else if (cmd_vel_pub_) {
             cmd_vel_pub_->publish(twist_msg);
+            stop_published = true;
         }
         // The zero was successfully handed to DDS; clear the stop latch.
         // Keep it latched if publishing throws or no publisher is available.
-        velocity_gate_.acknowledgeStopPublished();
+        if (stop_published) velocity_gate_.acknowledgeStopPublished();
     } else if (topic.compare("cmd_vel_smoothed") == 0) {
         cmd_vel_smoothed_pub_->publish(twist_msg);
     } else if (topic.compare("cmd_vel_unsafety") == 0) {
