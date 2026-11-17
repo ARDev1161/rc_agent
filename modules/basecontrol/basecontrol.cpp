@@ -224,6 +224,50 @@ void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& 
     }
 }
 
+bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocity,
+                                            const std::string& session,
+                                            const std::string& lease, bool deadman) {
+    // Admission checks TTL, monotonic sequence, finite SI values and lease identity.
+    // No scaling or legacy Controls path is involved.
+    const auto now = rc::api::v2::VelocityGate::Clock::now();
+    if (!velocity_gate_.admit(velocity, session, lease, deadman, now)) {
+        checkVelocityWatchdog();
+        return false;
+    }
+
+    geometry_msgs::msg::Twist twist;
+    twist.linear.x = velocity.linear().x();
+    twist.linear.y = velocity.linear().y();
+    twist.linear.z = velocity.linear().z();
+    twist.angular.x = velocity.angular().x();
+    twist.angular.y = velocity.angular().y();
+    twist.angular.z = velocity.angular().z();
+    try {
+        if (cmd_vel_msg_type_ == "twist_stamped") {
+            if (!cmd_vel_stamped_pub_) {
+                velocity_gate_.revoke();
+                return false;
+            }
+            geometry_msgs::msg::TwistStamped stamped;
+            stamped.header.stamp = this->now();
+            stamped.header.frame_id = cmd_vel_frame_id_;
+            stamped.twist = twist;
+            cmd_vel_stamped_pub_->publish(stamped);
+        } else {
+            if (!cmd_vel_pub_) {
+                velocity_gate_.revoke();
+                return false;
+            }
+            cmd_vel_pub_->publish(twist);
+        }
+        return true;
+    } catch (const std::exception& e) {
+        velocity_gate_.revoke();
+        RCLCPP_ERROR(get_logger(), "Leased velocity DDS publish failed: %s", e.what());
+        return false;
+    }
+}
+
 void BaseControlNode::checkVelocityWatchdog() {
     if (!velocity_gate_.stopPending(rc::api::v2::VelocityGate::Clock::now())) return;
     // Only the configured cmd_vel publisher is used. A failed publish must
