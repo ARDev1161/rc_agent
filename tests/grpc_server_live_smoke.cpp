@@ -267,6 +267,27 @@ int main() {
         require(replacement_controls->light().ledleftpower() == 73,
                 "stale stream changed controls after same-pointer rebind");
     }
+    // A graceful client half-close must not turn an invalidated transport
+    // generation into a successful RPC when reconnect races with EOF.
+    {
+        grpc::ClientContext halfclose_ctx;
+        halfclose_ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        auto halfclose = stub->DataStreamExchange(&halfclose_ctx);
+        Robot::Controls initial;
+        initial.mutable_light()->set_ledleftpower(37);
+        require(halfclose->Write(initial), "half-close stream initial write failed");
+        Robot::Sensors first_reply;
+        require(halfclose->Read(&first_reply), "half-close stream initial reply missing");
+        service.setProtosPointers(replacement_controls, replacement_sensors);
+        require(halfclose->WritesDone(), "half-close WritesDone failed");
+        Robot::Sensors ignored;
+        require(!halfclose->Read(&ignored), "half-close stream unexpectedly emitted sensors");
+        const auto status = halfclose->Finish();
+        require(status.error_code() == grpc::StatusCode::FAILED_PRECONDITION,
+                "rebound stream returned OK after graceful half-close");
+        require(replacement_controls->light().ledleftpower() == 37,
+                "half-close mutated controls after transport rebind");
+    }
     // Removing the transport state must fail closed for both RPC shapes.
     // A newly opened idle stream must not wait for its first client write.
     service.setProtosPointers(nullptr, nullptr);
