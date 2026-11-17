@@ -1459,3 +1459,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - rc_agent [e4a8de49](https://github.com/ARDev1161/rc_agent/commit/e4a8de4919ca65a3628b0ed2e9dff5ddb475791c): emergency zero DDS publication catches publisher exceptions, leaves watchdog stop latch set for retry, and logs error rather than throwing out of ROS callback.
 - P1 manual acceptance PENDING; P2 owner-authorized IN PROGRESS. No proto changes, no merges. Qt5/ROS2/Gazebo/hardware NOT RUN locally. Check Actions on final HEAD; do not infer success from previous run.
 - Next critical production block remains authorized v2 session/lease gRPC and SI joystick -> VelocityGate -> DDS; avoid test proliferation.
+
+
+## Handoff — 2026-11-17 15:xx CET, stream I/O failure propagation
+- AmurCore [bce4024d](https://github.com/ARDev1161/AmurCore/commit/bce4024d20a8867e1b7718912604c096e44329e9): `network/client.cpp` now checks both gRPC stream Write and Read before emitting `sensorsUpdated` or `mapUpdated`; EOF/error no longer emits a stale UI update. Stream Finish still reports its actual gRPC status.
+- rc_agent [fe4dd14e](https://github.com/ARDev1161/rc_agent/commit/fe4dd14ed904399972a33ee023095a81b522eaa8): `network/server.cpp` reports UNAVAILABLE on failed sensor stream Write instead of breaking and returning OK; cancellation remains CANCELLED. This is transport reliability, NOT v2 authorized motion.
+- P1 manual acceptance PENDING; P2 owner-authorized IN PROGRESS. No protobuf edits, default/docs merges, or remote motion grant. Local Qt5/ROS2/Gazebo/hardware NOT RUN; final PLAN HEAD Actions need exact-SHA confirmation.
+- Next: complete authenticated v2 session/lease RPC, operator SI joystick sender, gate-to-DDS and minimal motion/zero-stop smoke; do not confuse transport improvements with P2 completion.
