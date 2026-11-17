@@ -334,8 +334,8 @@ int main() {
         require(mock.matchesDescriptor(), "Stream lost robot ID or capability/axes");
         {
             std::lock_guard<std::mutex> lock(*mutex);
-            require(controls->basecontrol().linearvelocity() == 11.0,
-                    "Stream controls were not applied");
+            require(!controls->has_basecontrol(),
+                    "Closed streaming RPC retained stale operator controls");
         }
 
         // Clean server EOF must reconnect when retry is enabled. The next
