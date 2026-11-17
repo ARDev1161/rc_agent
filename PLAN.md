@@ -1445,3 +1445,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - rc_agent [`0a050b78`](https://github.com/ARDev1161/rc_agent/commit/0a050b78b7dc208a614fe467c13c110c5b2ecb83): failed leased DDS publisher paths immediately attempt latched watchdog zero after lease revoke; periodic timer remains fallback. This does not authorize new motion.
 - P1 manual acceptance pending, P2 owner-authorized in progress; no shared proto changes, no merge. Local Qt5/ROS2/Gazebo/hardware NOT RUN; exact new HEAD CI must be inspected (no green inference from old SHA).
 - Next production priority: authenticated v2 gRPC session/lease + AmurCore SI joystick sender -> BaseControlNode publishLeasedVelocity, then minimum motion/zero-stop integration smoke. No new test framework.
+
+
+## Handoff — 2026-11-17 13:xx CET, v2-only stream smoke correction
+- Previous exact HEAD CI: AmurCore `8700b1fa` [Actions #44073644903](https://github.com/ARDev1161/AmurCore/actions/runs/44073644903) FAILED only `qt-app-build` -> `rc_api_v2_transport` (`Streaming controls payload changed`); `protobuf-compatibility` and real AmurCore/rc_agent pair PASSED. rc_agent `46050b09` [Actions #44073662143](https://github.com/ARDev1161/rc_agent/actions/runs/44073662143) SUCCESS.
+- AmurCore production v2-only transport deliberately zeros unauthenticated streaming velocity. Commit [7f877f09](https://github.com/ARDev1161/AmurCore/commit/7f877f0972749930863e6e4c308a320e752a89da) updates the remaining outdated `grpc_server_smoke.cpp` assertion to require zero on BOTH linear/angular axes; no test framework or production protocol changes.
+- rc_agent production unchanged this cycle; no unnecessary commit made. Both shared v2 proto blobs still `3b7c1eef43065ffc49777f18db900785bade69fa`.
+- P1 manual acceptance pending, P2 owner-authorized in progress. Verify exact new AmurCore HEAD Actions before calling green. Local Qt5/ROS2/Gazebo/physical/VPN NOT RUN. Next: authenticated v2 RPC/session/lease with AmurCore SI joystick sender and rc_agent VelocityGate -> DDS; minimum movement/stop smoke only. No merges or documentation branch changes.
