@@ -169,6 +169,12 @@ void grpcClient::unregisterStreamContext(grpc::ClientContext &context)
 void grpcClient::stopStream()
 {
     stoppedStream.store(true);
+    // A disconnected operator must not leave its last control snapshot live.
+    // This is state invalidation, not an authorized ROS motion/stop command.
+    {
+        std::lock_guard<std::mutex> lock(*muClient);
+        if (controls_) controls_->Clear();
+    }
     std::lock_guard<std::mutex> lock(muActiveContexts);
     for (auto *context : activeContexts) {
         context->TryCancel();
