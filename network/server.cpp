@@ -74,7 +74,7 @@ grpc::Status grpcServer::DataStreamExchange(grpc::ServerContext* context,
             // A graceful client half-close remains OK.
             if (context->IsCancelled())
                 return grpc::Status(grpc::StatusCode::CANCELLED, "client disconnected");
-            break;
+            return grpc::Status(grpc::StatusCode::UNAVAILABLE, "sensor stream write failed");
         }
     }
     if (context->IsCancelled())
