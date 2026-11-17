@@ -79,5 +79,13 @@ grpc::Status grpcServer::DataStreamExchange(grpc::ServerContext* context,
     }
     if (context->IsCancelled())
         return grpc::Status(grpc::StatusCode::CANCELLED, "client disconnected");
+    // A graceful half-close is OK only for the same bound transport state.
+    // Otherwise a reconnect racing with Read() == false could appear successful.
+    {
+        std::lock_guard<std::mutex> lock(muServer);
+        if (!controls_ || !sensors_ || state_generation_ != bound_generation ||
+            controls_ != bound_controls || sensors_ != bound_sensors)
+            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state generation changed");
+    }
     return grpc::Status::OK;
 }
