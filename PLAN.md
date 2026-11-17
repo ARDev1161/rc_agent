@@ -1466,3 +1466,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - rc_agent [fe4dd14e](https://github.com/ARDev1161/rc_agent/commit/fe4dd14ed904399972a33ee023095a81b522eaa8): `network/server.cpp` reports UNAVAILABLE on failed sensor stream Write instead of breaking and returning OK; cancellation remains CANCELLED. This is transport reliability, NOT v2 authorized motion.
 - P1 manual acceptance PENDING; P2 owner-authorized IN PROGRESS. No protobuf edits, default/docs merges, or remote motion grant. Local Qt5/ROS2/Gazebo/hardware NOT RUN; final PLAN HEAD Actions need exact-SHA confirmation.
 - Next: complete authenticated v2 session/lease RPC, operator SI joystick sender, gate-to-DDS and minimal motion/zero-stop smoke; do not confuse transport improvements with P2 completion.
+
+
+## Handoff — 2026-11-17, v2 velocity authorization envelope (schema only)
+- Added mirrored `VelocityCommand` (robot/session/lease IDs, SI Velocity, deadman) and `VelocityLease` (identity, lifetime, explicit grant/rejection) to `network/protobuf/rc_api_v2.proto` in BOTH repositories. Matching protobuf blob: `228d1a335026ead6a67def2118037cf5d25f9412`.
+- AmurCore protocol commit `c31b278c9e4abf177ee0f35d439cb5d49bb6c2b4`; rc_agent protocol commit `480fe389c8e19cf640dc8d1354c089fcae5fdbf0`. This is only a typed wire envelope, NOT an authenticated RPC, live lease issuer, or motion enablement. Fail-closed generic Controls remains in place.
+- P1 manual ACCEPTANCE PENDING; P2 IN PROGRESS. No legacy compatibility requirement (owner override). No default/docs merges. Local Qt5/ROS2/Gazebo/hardware NOT RUN. Check Actions on final PLAN HEAD before claiming green.
+- Next: implement trusted session/lease issuance and reverse gRPC command delivery on operator server and agent client, validate each command with VelocityGate, connect SI joystick and DDS, then minimal motion/stop smoke. Never accept a caller-supplied lease as authorization.
