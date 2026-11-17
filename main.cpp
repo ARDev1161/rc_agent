@@ -72,9 +72,7 @@ void configureRobotInfo(Sensors &sensors, const std::string &config_path)
   std::string robot_id;
   if (config.searchString("Amur.API.robot_id", robot_id) != EXIT_SUCCESS ||
       robot_id.empty()) {
-    RCLCPP_INFO(rclcpp::get_logger("rc_agent"),
-                "No Amur.API.robot_id: v2 announcement disabled (legacy mode)");
-    return;
+    throw std::invalid_argument("Amur.API.robot_id is required for RC API v2");
   }
 
   std::vector<std::string> capabilities;
