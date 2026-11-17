@@ -1423,3 +1423,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - AmurCore [6347df6a](https://github.com/ARDev1161/AmurCore/commit/6347df6ac58a08ed7a8ab42b25caa85e3dcc6517): MapStream/PoseStream/ZoneStream now propagate cancelled RPC status instead of treating cancellation as a successful EOF. No v2 proto changes (matching blob 3b7c1eef43065ffc49777f18db900785bade69fa).
 - P1 manual ACCEPTANCE PENDING; P2 owner-authorized IN PROGRESS. Qt5/ROS2/Gazebo/hardware NOT RUN locally. Check Actions for final PLAN HEAD; do not infer CI from older commits. No merges or docs branch modifications.
 - Next: implement the authenticated v2 RPC and operator SI command path; integrate it with lease/VelocityGate and DDS publish, with one minimal authorized-motion/zero-stop smoke.
+
+
+## Handoff — 2026-11-17, enforce v2-only motion boundary and restore ROS build
+- rc_agent [c53bab40](https://github.com/ARDev1161/rc_agent/commit/c53bab40b58be5a855b33d3d628b592c66bcdba4) fixes the emergency-zero DDS branch in `modules/basecontrol/basecontrol.cpp`: prior source contained literal `\\n` escape text in C++ and used undeclared `stop_published`, preventing compilation. It now revokes the lease, publishes zero and acknowledges the gate latch only after DDS publish.
+- AmurCore [e3cdcb7b](https://github.com/ARDev1161/AmurCore/commit/e3cdcb7ba973367b61edcf97f2666e8a1916412b) forces zero linear/angular velocity in both outgoing generic Controls unary and stream snapshots, regardless of stale GUI writers. This is a fail-closed v2-only transport boundary; no authorized teleop yet.
+- P1 manual acceptance pending; P2 owner-authorized IN PROGRESS. Shared protobuf unchanged and identical (blob 3b7c1eef43065ffc49777f18db900785bade69fa). No default/docs merges. Local Qt5/ROS2/Gazebo/hardware tests NOT RUN (no GitHub DNS or ROS2 workspace); exact final HEAD CI must be checked; do not claim success based on older SHA.
+- Next: finish authenticated v2 session/lease/TTL/deadman gRPC transport, wire AmurCore joystick SI commands to ROS2 gated DDS, then minimal motion/zero-stop smoke. Avoid unrelated test expansion.
