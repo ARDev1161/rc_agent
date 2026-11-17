@@ -1416,3 +1416,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - AmurCore [dc95e2ce](https://github.com/ARDev1161/AmurCore/commit/dc95e2cec4b39287bbc17941c4b7b6c6f20e6c7d) aligns existing real-peer assertion with intentional stopStream fail-closed invalidation.
 - rc_agent [9de16021](https://github.com/ARDev1161/rc_agent/commit/9de16021a9df216879c3dd59b3c7a26c517988e1) aligns existing stream EOF assertion; [1ead902f](https://github.com/ARDev1161/rc_agent/commit/1ead902f78617eebdf4c40b41c21f820343436ab) additionally clears cached Controls on failed unary RPC before retry to prevent stale operator command reuse.
 - P1 manual ACCEPTANCE PENDING, P2 owner-authorized IN PROGRESS. Remote v2 motion remains disabled; no proto changes, no merge. Local Qt5/ROS2/Gazebo/hardware NOT RUN. Check Actions on final PLAN HEAD and fix remaining failures; then prioritize actual authenticated v2 velocity gRPC->VelocityGate->DDS with SI units and minimal safety smoke.
+
+
+## Handoff — 2026-11-17, emergency stop and stream cancellation
+- rc_agent [8168685e](https://github.com/ARDev1161/rc_agent/commit/8168685e15f24ac362af7e1a55b2e09c83394d9b): generic DDS zero on configured cmd_vel now revokes any v2 gate lease, and acknowledges stop only after an actual Twist/TwistStamped publish. Nonzero generic velocity still rejected; authenticated gRPC -> gate -> DDS remains unimplemented.
+- AmurCore [6347df6a](https://github.com/ARDev1161/AmurCore/commit/6347df6ac58a08ed7a8ab42b25caa85e3dcc6517): MapStream/PoseStream/ZoneStream now propagate cancelled RPC status instead of treating cancellation as a successful EOF. No v2 proto changes (matching blob 3b7c1eef43065ffc49777f18db900785bade69fa).
+- P1 manual ACCEPTANCE PENDING; P2 owner-authorized IN PROGRESS. Qt5/ROS2/Gazebo/hardware NOT RUN locally. Check Actions for final PLAN HEAD; do not infer CI from older commits. No merges or docs branch modifications.
+- Next: implement the authenticated v2 RPC and operator SI command path; integrate it with lease/VelocityGate and DDS publish, with one minimal authorized-motion/zero-stop smoke.
