@@ -222,6 +222,13 @@ grpc::Status grpcClient::DataStreamExchange()
                     *controls_ = std::move(incoming);
                 }
             }
+            // EOF or network failure invalidates the operator snapshot even
+            // when automatic reconnect is enabled. A new stream must deliver
+            // fresh controls; never reuse commands from a dead connection.
+            {
+                std::lock_guard<std::mutex> lock(*muClient);
+                if (controls_) controls_->Clear();
+            }
         }
     );
 }
