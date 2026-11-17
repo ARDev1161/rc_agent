@@ -1409,3 +1409,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - rc_agent [68e93a8d](https://github.com/ARDev1161/rc_agent/commit/68e93a8dd80a5de3dd6c7edae73ca3b8ae9b1a3c) rejects missing robot_id instead of silently running in legacy announcement mode. No shared protobuf change; v2-only owner override honored.
 - P1 manual ACCEPTANCE PENDING; P2 IN PROGRESS. Remote motion remains disabled. Local ROS2/Qt5/Gazebo/hardware NOT RUN. CI for final HEAD requires fresh verification.
 - Next: actual v2 authenticated command sender and server with configured identity/session/lease, then connect gated DDS publisher and watchdog; only essential integration smoke tests.
+
+
+## Handoff — 2026-11-17, fail-closed transport CI correction
+- Confirmed red exact-HEAD Actions: AmurCore [#44030455817](https://github.com/ARDev1161/AmurCore/actions/runs/44030455817): real-peer smoke expected stale controls to survive stop; rc_agent [#44030471191](https://github.com/ARDev1161/rc_agent/actions/runs/44030471191): loopback expected controls to survive clean stream EOF and real-peer same stale-state assertion. Qt5 build, ROS2 Humble build, protobuf/config jobs succeeded on those earlier SHAs, but overall workflows FAILED.
+- AmurCore [dc95e2ce](https://github.com/ARDev1161/AmurCore/commit/dc95e2cec4b39287bbc17941c4b7b6c6f20e6c7d) aligns existing real-peer assertion with intentional stopStream fail-closed invalidation.
+- rc_agent [9de16021](https://github.com/ARDev1161/rc_agent/commit/9de16021a9df216879c3dd59b3c7a26c517988e1) aligns existing stream EOF assertion; [1ead902f](https://github.com/ARDev1161/rc_agent/commit/1ead902f78617eebdf4c40b41c21f820343436ab) additionally clears cached Controls on failed unary RPC before retry to prevent stale operator command reuse.
+- P1 manual ACCEPTANCE PENDING, P2 owner-authorized IN PROGRESS. Remote v2 motion remains disabled; no proto changes, no merge. Local Qt5/ROS2/Gazebo/hardware NOT RUN. Check Actions on final PLAN HEAD and fix remaining failures; then prioritize actual authenticated v2 velocity gRPC->VelocityGate->DDS with SI units and minimal safety smoke.
