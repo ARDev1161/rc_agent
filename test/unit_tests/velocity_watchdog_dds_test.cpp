@@ -380,6 +380,28 @@ TEST(VelocityGateContract, WrongSessionRevokesMotionAndRequiresStopBeforeRegrant
     EXPECT_TRUE(gate.admit(makeVelocity(1, 500), "session-b", "lease-b", true, t0 + 5ms));
 }
 
+// A malformed replacement grant must revoke an already moving session and
+// retain the zero-stop barrier until the ROS publisher acknowledges it.
+// This covers disconnect/re-auth races without enabling a network grant API.
+TEST(VelocityGateContract, EmptyReplacementCredentialsCannotKeepMotionAlive) {
+    const auto t0 = Gate::Clock::time_point{} + 10s;
+    for (const auto& credentials : {
+             std::pair<std::string, std::string>{"", "lease-b"},
+             std::pair<std::string, std::string>{"session-b", ""}}) {
+        Gate gate;
+        gate.grant("session-a", "lease-a", t0);
+        ASSERT_TRUE(gate.admit(makeVelocity(1, 500), "session-a", "lease-a", true, t0));
+        gate.grant(credentials.first, credentials.second, t0 + 1ms);
+        EXPECT_TRUE(gate.stopPending(t0 + 2ms));
+        EXPECT_FALSE(gate.admit(makeVelocity(2, 500), "session-a", "lease-a", true, t0 + 3ms));
+        gate.grant("session-b", "lease-b", t0 + 4ms);
+        EXPECT_FALSE(gate.admit(makeVelocity(1, 500), "session-b", "lease-b", true, t0 + 4ms));
+        gate.acknowledgeStopPublished();
+        gate.grant("session-b", "lease-b", t0 + 5ms);
+        EXPECT_TRUE(gate.admit(makeVelocity(1, 500), "session-b", "lease-b", true, t0 + 5ms));
+    }
+}
+
 TEST(VelocityGateContract, WrongLeaseAndInvalidTtlFailClosed) {
     const auto t0 = Gate::Clock::time_point{} + 10s;
     for (const auto invalid_ttl : {0u, 1001u}) {
