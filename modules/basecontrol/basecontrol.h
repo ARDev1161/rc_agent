@@ -36,6 +36,11 @@ private:
 
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void checkVelocityWatchdog();
+    // Called only after the transport authenticates a session and grants a lease.
+    // Never expose this method through a generic ROS command topic.
+    bool publishLeasedVelocity(const rc::api::v2::Velocity& velocity,
+                               const std::string& session, const std::string& lease,
+                               bool deadman);
 
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
 
