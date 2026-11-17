@@ -133,6 +133,12 @@ grpc::Status grpcClient::DataExchange()
             *controls_ = std::move(reply);
             return status;
         }
+        // A failed unary exchange invalidates the previous operator snapshot.
+        // Retrying must never expose commands from a dead connection to ROS.
+        {
+            std::lock_guard<std::mutex> lock(*muClient);
+            if (controls_) controls_->Clear();
+        }
         std::cout << "DataExchange rpc failed: " << status.error_message() << std::endl;
         if (!retryConnect) {
             return status;
