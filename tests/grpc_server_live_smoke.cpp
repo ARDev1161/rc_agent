@@ -118,6 +118,25 @@ int main() {
         require(controls->basecontrol().linearvelocity() == 0.0,
                 "rejected non-finite velocity changed controls");
     }
+    // Streaming must apply the same fail-closed policy to non-finite motion.
+    // The preceding unary regression alone does not exercise streaming admission.
+    for (double invalid : {std::numeric_limits<double>::quiet_NaN(),
+                           -std::numeric_limits<double>::infinity()}) {
+        grpc::ClientContext ctx;
+        ctx.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        auto invalid_stream = stub->DataStreamExchange(&ctx);
+        Robot::Controls unsafe;
+        unsafe.mutable_basecontrol()->set_angularvelocity(invalid);
+        require(invalid_stream->Write(unsafe), "non-finite stream write failed");
+        Robot::Sensors ignored;
+        require(!invalid_stream->Read(&ignored),
+                "non-finite stream emitted successful sensors");
+        const auto status = invalid_stream->Finish();
+        require(status.error_code() == grpc::StatusCode::PERMISSION_DENIED,
+                "non-finite streaming velocity bypassed lease guard");
+        require(controls->basecontrol().angularvelocity() == 0.0,
+                "rejected non-finite stream mutated controls");
+    }
     // A zero-velocity control and non-motion auxiliary command remain usable.
     {
         Robot::Controls safe;
