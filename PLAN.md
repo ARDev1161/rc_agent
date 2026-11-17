@@ -1395,3 +1395,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - rc_agent [963758ee](https://github.com/ARDev1161/rc_agent/commit/963758ee2552697ffbd39d41d0c0f34bfd2cf6ee): stopStream invalidates the last cached operator Controls before cancelling active RPCs; this does NOT publish motion or enable remote teleop.
 - P1 ACCEPTANCE PENDING; P2 IN PROGRESS. Shared proto unchanged; no default/docs branch merges. Local Qt5/ROS2/Gazebo/hardware NOT RUN; inspect GitHub Actions on final PLAN HEAD before reporting CI success.
 - Next: prioritize actual authenticated v2 command/session/lease integration with ROS2 DDS watchdog and SI-unit AmurCore client. Add only essential motion/stop/authorization regression; do not proliferate transport edge-case tests.
+
+
+## Handoff — 2026-11-17, remove raw operator actuator output and stale stream commands
+- AmurCore [e9d0acd3](https://github.com/ARDev1161/AmurCore/commit/e9d0acd3a67410a001a0071e4b8b3763f02efb4a) and [b3f77227](https://github.com/ARDev1161/AmurCore/commit/b3f7722766f36d5789c1782d0922fe45c029db22): joystick ManualControl no longer writes raw handmotor power/time commands, removing a direct actuator command path forbidden by v2. Existing camera/light/relay and base velocity paths remain pending proper v2 migration.
+- rc_agent [3a35f18e](https://github.com/ARDev1161/rc_agent/commit/3a35f18ee2ecdc9f02033b0c6b52ef800ad7ab60): clear cached Controls whenever DataStreamExchange pump ends (EOF or network error), before retry, preventing old operator commands from surviving reconnect.
+- P1 manual ACCEPTANCE PENDING; P2 owner-authorized IN PROGRESS. Neither change grants v2 motion; authenticated lease -> VelocityGate -> DDS and SI joystick mapping still required. Shared v2 proto blob identical 3b7c1eef43065ffc49777f18db900785bade69fa; no merges. Local Qt5/ROS2/Gazebo/hardware NOT RUN; CI must be verified for exact final HEAD, not old green runs.
+- Next: replace remaining old Controls transport with explicit v2 velocity/session/lease and ROS2 cmd_vel, with minimal safety integration tests; preserve joystick, Nav2, map, video.
