@@ -230,6 +230,11 @@ bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocit
     // Admission checks TTL, monotonic sequence, finite SI values and lease identity.
     // No scaling or legacy Controls path is involved.
     const auto now = rc::api::v2::VelocityGate::Clock::now();
+    if (velocity.frame_id() != cmd_vel_frame_id_) {
+        velocity_gate_.revoke();
+        checkVelocityWatchdog();
+        return false;
+    }
     if (!velocity_gate_.admit(velocity, session, lease, deadman, now)) {
         checkVelocityWatchdog();
         return false;
