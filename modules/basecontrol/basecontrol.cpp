@@ -198,7 +198,10 @@ void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& 
             RCLCPP_ERROR(get_logger(), "Rejecting direct cmd_vel motion without v2 lease");
             return;
         }
-        // A direct emergency stop must also invalidate any admitted v2 motion.\n        // Otherwise a previously granted lease could keep accepting commands.\n        velocity_gate_.revoke();\n        if (cmd_vel_msg_type_ == "twist_stamped" && cmd_vel_stamped_pub_) {
+        // Emergency zero revokes the active lease; acknowledge only after DDS publish.
+        velocity_gate_.revoke();
+        bool stop_published = false;
+        if (cmd_vel_msg_type_ == "twist_stamped" && cmd_vel_stamped_pub_) {
             geometry_msgs::msg::TwistStamped stamped;
             stamped.header.stamp = this->now();
             stamped.header.frame_id = cmd_vel_frame_id_;
