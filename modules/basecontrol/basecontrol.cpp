@@ -251,6 +251,7 @@ bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocit
         if (cmd_vel_msg_type_ == "twist_stamped") {
             if (!cmd_vel_stamped_pub_) {
                 velocity_gate_.revoke();
+                checkVelocityWatchdog();
                 return false;
             }
             geometry_msgs::msg::TwistStamped stamped;
@@ -261,6 +262,7 @@ bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocit
         } else {
             if (!cmd_vel_pub_) {
                 velocity_gate_.revoke();
+                checkVelocityWatchdog();
                 return false;
             }
             cmd_vel_pub_->publish(twist);
@@ -268,6 +270,7 @@ bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocit
         return true;
     } catch (const std::exception& e) {
         velocity_gate_.revoke();
+        checkVelocityWatchdog();
         RCLCPP_ERROR(get_logger(), "Leased velocity DDS publish failed: %s", e.what());
         return false;
     }
