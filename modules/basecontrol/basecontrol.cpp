@@ -198,7 +198,7 @@ void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& 
             RCLCPP_ERROR(get_logger(), "Rejecting direct cmd_vel motion without v2 lease");
             return;
         }
-        if (cmd_vel_msg_type_ == "twist_stamped" && cmd_vel_stamped_pub_) {
+        // A direct emergency stop must also invalidate any admitted v2 motion.\n        // Otherwise a previously granted lease could keep accepting commands.\n        velocity_gate_.revoke();\n        if (cmd_vel_msg_type_ == "twist_stamped" && cmd_vel_stamped_pub_) {
             geometry_msgs::msg::TwistStamped stamped;
             stamped.header.stamp = this->now();
             stamped.header.frame_id = cmd_vel_frame_id_;
@@ -207,6 +207,9 @@ void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& 
         } else if (cmd_vel_pub_) {
             cmd_vel_pub_->publish(twist_msg);
         }
+        // The zero was successfully handed to DDS; clear the stop latch.
+        // Keep it latched if publishing throws or no publisher is available.
+        velocity_gate_.acknowledgeStopPublished();
     } else if (topic.compare("cmd_vel_smoothed") == 0) {
         cmd_vel_smoothed_pub_->publish(twist_msg);
     } else if (topic.compare("cmd_vel_unsafety") == 0) {
