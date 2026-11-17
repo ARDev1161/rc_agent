@@ -1452,3 +1452,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - AmurCore production v2-only transport deliberately zeros unauthenticated streaming velocity. Commit [7f877f09](https://github.com/ARDev1161/AmurCore/commit/7f877f0972749930863e6e4c308a320e752a89da) updates the remaining outdated `grpc_server_smoke.cpp` assertion to require zero on BOTH linear/angular axes; no test framework or production protocol changes.
 - rc_agent production unchanged this cycle; no unnecessary commit made. Both shared v2 proto blobs still `3b7c1eef43065ffc49777f18db900785bade69fa`.
 - P1 manual acceptance pending, P2 owner-authorized in progress. Verify exact new AmurCore HEAD Actions before calling green. Local Qt5/ROS2/Gazebo/physical/VPN NOT RUN. Next: authenticated v2 RPC/session/lease with AmurCore SI joystick sender and rc_agent VelocityGate -> DDS; minimum movement/stop smoke only. No merges or documentation branch changes.
+
+
+## Handoff — 2026-11-17 14:24 CET, fail-closed stream/DDS errors
+- AmurCore [28459a03](https://github.com/ARDev1161/AmurCore/commit/28459a03126057e885b3721d3be7c760abedbc4f): MapStream/PoseStream/ZoneStream return UNAVAILABLE on failed response write, instead of silently reporting OK. Cancellation still returns CANCELLED.
+- rc_agent [e4a8de49](https://github.com/ARDev1161/rc_agent/commit/e4a8de4919ca65a3628b0ed2e9dff5ddb475791c): emergency zero DDS publication catches publisher exceptions, leaves watchdog stop latch set for retry, and logs error rather than throwing out of ROS callback.
+- P1 manual acceptance PENDING; P2 owner-authorized IN PROGRESS. No proto changes, no merges. Qt5/ROS2/Gazebo/hardware NOT RUN locally. Check Actions on final HEAD; do not infer success from previous run.
+- Next critical production block remains authorized v2 session/lease gRPC and SI joystick -> VelocityGate -> DDS; avoid test proliferation.
