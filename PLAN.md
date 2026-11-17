@@ -1402,3 +1402,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - rc_agent [3a35f18e](https://github.com/ARDev1161/rc_agent/commit/3a35f18ee2ecdc9f02033b0c6b52ef800ad7ab60): clear cached Controls whenever DataStreamExchange pump ends (EOF or network error), before retry, preventing old operator commands from surviving reconnect.
 - P1 manual ACCEPTANCE PENDING; P2 owner-authorized IN PROGRESS. Neither change grants v2 motion; authenticated lease -> VelocityGate -> DDS and SI joystick mapping still required. Shared v2 proto blob identical 3b7c1eef43065ffc49777f18db900785bade69fa; no merges. Local Qt5/ROS2/Gazebo/hardware NOT RUN; CI must be verified for exact final HEAD, not old green runs.
 - Next: replace remaining old Controls transport with explicit v2 velocity/session/lease and ROS2 cmd_vel, with minimal safety integration tests; preserve joystick, Nav2, map, video.
+
+
+## Handoff — 2026-11-17, v2-only fail-closed migration
+- AmurCore [1ffe50b5](https://github.com/ARDev1161/AmurCore/commit/1ffe50b548af173d6e39e46e083eaddb4853f4bb) stops emitting joystick-derived legacy Controls.BaseControl velocity without TTL/session/lease; the generic stream sends explicit zero until a dedicated authenticated v2 sender exists. This intentionally does NOT enable teleop.
+- rc_agent [68e93a8d](https://github.com/ARDev1161/rc_agent/commit/68e93a8dd80a5de3dd6c7edae73ca3b8ae9b1a3c) rejects missing robot_id instead of silently running in legacy announcement mode. No shared protobuf change; v2-only owner override honored.
+- P1 manual ACCEPTANCE PENDING; P2 IN PROGRESS. Remote motion remains disabled. Local ROS2/Qt5/Gazebo/hardware NOT RUN. CI for final HEAD requires fresh verification.
+- Next: actual v2 authenticated command sender and server with configured identity/session/lease, then connect gated DDS publisher and watchdog; only essential integration smoke tests.
