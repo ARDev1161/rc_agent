@@ -37,6 +37,30 @@ message Velocity {
   uint32 valid_for_ms = 5; // Deadman TTL; mandatory when v2 teleop is enabled.
 }
 
+// Wire-only control envelope. A lease token MUST be issued by the robot's
+// trusted session authority and bound to robot_id and session_id. Presence of
+// these fields alone never authorizes motion; the receiver must validate the
+// grant, freshness, supported axes and deadman before publishing to DDS.
+message VelocityCommand {
+  string robot_id = 1;
+  string session_id = 2;
+  string lease_id = 3;
+  Velocity velocity = 4;
+  bool deadman = 5;
+}
+
+// Explicitly distinguishes a granted lease from an attempted request.
+// This message is not a grant by itself; only the trusted endpoint may issue
+// a live lease, and disconnect/reconnect must revoke the previous generation.
+message VelocityLease {
+  string robot_id = 1;
+  string session_id = 2;
+  string lease_id = 3;
+  uint32 duration_ms = 4;
+  bool granted = 5;
+  string rejection_reason = 6;
+}
+
 // Task lifecycle is independent from LLM, PlanSys2, Nav2 and OpenRMF.
 message TaskStatus {
   enum State {
