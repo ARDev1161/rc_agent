@@ -661,8 +661,8 @@ int main() {
                 "One-shot unary did not fail promptly");
         {
             std::lock_guard<std::mutex> lock(*client.getMutex());
-            require(controls->basecontrol().linearvelocity() == 11.0,
-                    "Failed unary overwrote a valid control reply");
+            require(controls->basecontrol().linearvelocity() == 0.0,
+                    "Disconnected or unauthenticated control velocity must be zero");
         }
 
         // One transient failure must recover when retry is enabled,
@@ -718,8 +718,8 @@ int main() {
                 "Stopped client restarted unary RPC");
         {
             std::lock_guard<std::mutex> lock(*unary_cancel.getMutex());
-            require(controls->basecontrol().linearvelocity() == 11.0,
-                    "Canceled unary RPC changed previously valid controls");
+            require(controls->basecontrol().linearvelocity() == 0.0,
+                    "Disconnected or unauthenticated control velocity must be zero");
         }
 
         // Simulate a server that holds the reply. stopStream must cancel
@@ -748,8 +748,8 @@ int main() {
                     std::chrono::seconds(3), "stopStream took too long");
         {
             std::lock_guard<std::mutex> lock(*cancellable.getMutex());
-            require(controls->basecontrol().linearvelocity() == 11.0,
-                    "Cancellation overwrote previously valid controls");
+            require(controls->basecontrol().linearvelocity() == 0.0,
+                    "Disconnected or unauthenticated control velocity must be zero");
         }
         require(cancellable.DataStreamExchange().error_code() ==
                     grpc::StatusCode::CANCELLED,
@@ -783,8 +783,8 @@ int main() {
                 "Concurrent stream cancellation returned wrong status");
         {
             std::lock_guard<std::mutex> lock(*multi_stream.getMutex());
-            require(controls->basecontrol().linearvelocity() == 11.0,
-                    "Concurrent cancellation changed valid controls");
+            require(controls->basecontrol().linearvelocity() == 0.0,
+                    "Disconnected or unauthenticated control velocity must be zero");
         }
 
         // A single client may have a blocked unary and a blocked stream at
@@ -823,8 +823,8 @@ int main() {
                 "Mixed stopped client restarted an RPC");
         {
             std::lock_guard<std::mutex> lock(*mixed.getMutex());
-            require(controls->basecontrol().linearvelocity() == 11.0,
-                    "Mixed cancellation overwrote valid controls");
+            require(controls->basecontrol().linearvelocity() == 0.0,
+                    "Disconnected or unauthenticated control velocity must be zero");
         }
 
         // Stopping during a retry backoff must report CANCELLED, not the
@@ -850,8 +850,8 @@ int main() {
                 "Stopped stream backoff leaked transient failure status");
         {
             std::lock_guard<std::mutex> lock(*backoff_stream.getMutex());
-            require(controls->basecontrol().linearvelocity() == 11.0,
-                    "Stream retry shutdown changed valid controls");
+            require(controls->basecontrol().linearvelocity() == 0.0,
+                    "Disconnected or unauthenticated control velocity must be zero");
         }
 
         // The streaming transport must obey the same one-shot policy.
@@ -865,8 +865,8 @@ int main() {
                 "One-shot stream retried or blocked unexpectedly");
         {
             std::lock_guard<std::mutex> lock(*one_shot_stream.getMutex());
-            require(controls->basecontrol().linearvelocity() == 11.0,
-                    "Failed stream overwrote previously valid controls");
+            require(controls->basecontrol().linearvelocity() == 0.0,
+                    "Disconnected or unauthenticated control velocity must be zero");
         }
     } catch (const std::exception &e) {
         mock.release_reply = true;
