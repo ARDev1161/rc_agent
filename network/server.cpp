@@ -3,8 +3,12 @@
 namespace {
 // The generic Controls RPC has no authenticated v2 session or lease.
 // Never accept motion on this transport while the v2 velocity path is gated.
-bool containsUnleasedVelocity(const Controls& controls)
+bool containsForbiddenMotion(const Controls& controls)
 {
+    if (controls.has_wheelmotors() &&
+        (controls.wheelmotors().leftpower() != 0 || controls.wheelmotors().rightpower() != 0)) return true;
+    if (controls.has_handmotors() &&
+        (controls.handmotors().leftpower() != 0 || controls.handmotors().rightpower() != 0)) return true;
     if (!controls.has_basecontrol()) return false;
     const auto& velocity = controls.basecontrol();
     return velocity.linearvelocity() != 0.0 || velocity.angularvelocity() != 0.0;
@@ -27,8 +31,8 @@ grpc::Status grpcServer::DataExchange(grpc::ServerContext* context,
         return grpc::Status(grpc::StatusCode::CANCELLED, "client disconnected");
     if (!controls_ || !sensors_)
         return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state unavailable");
-    if (containsUnleasedVelocity(*request))
-        return grpc::Status(grpc::StatusCode::PERMISSION_DENIED, "velocity requires authenticated v2 lease");
+    if (containsForbiddenMotion(*request))
+        return grpc::Status(grpc::StatusCode::PERMISSION_DENIED, "motion requires authorized v2 control path");
     *controls_ = *request;
     *reply = *sensors_;
     return grpc::Status::OK;
@@ -64,8 +68,8 @@ grpc::Status grpcServer::DataStreamExchange(grpc::ServerContext* context,
             if (!controls_ || !sensors_ || state_generation_ != bound_generation ||
                 controls_ != bound_controls || sensors_ != bound_sensors)
                 return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "transport state generation changed");
-            if (containsUnleasedVelocity(incoming))
-                return grpc::Status(grpc::StatusCode::PERMISSION_DENIED, "velocity requires authenticated v2 lease");
+            if (containsForbiddenMotion(incoming))
+                return grpc::Status(grpc::StatusCode::PERMISSION_DENIED, "motion requires authorized v2 control path");
             *controls_ = incoming;
             outgoing = *sensors_;
         }
