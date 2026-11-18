@@ -198,7 +198,8 @@ void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& 
             RCLCPP_ERROR(get_logger(), "Rejecting direct cmd_vel motion without v2 lease");
             return;
         }
-        // Emergency zero revokes the active lease; acknowledge only after DDS publish.
+        // Emergency zero and leased writes must not race on the DDS publisher.
+        std::lock_guard<std::mutex> publish_lock(velocity_publish_mutex_);
         velocity_gate_.revoke();
         bool stop_published = false;
         try {
@@ -245,6 +246,14 @@ bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocit
         return false;
     }
 
+    // A watchdog stop can race with admission. Hold the DDS publication lock
+    // and recheck the monotonic deadline before emitting any nonzero motion.
+    std::lock_guard<std::mutex> publish_lock(velocity_publish_mutex_);
+    if (velocity_gate_.expired(rc::api::v2::VelocityGate::Clock::now())) {
+        velocity_gate_.revoke();
+        return false; // Timer publishes the latched zero without lock recursion.
+    }
+
     geometry_msgs::msg::Twist twist;
     twist.linear.x = velocity.linear().x();
     twist.linear.y = velocity.linear().y();
@@ -256,7 +265,6 @@ bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocit
         if (cmd_vel_msg_type_ == "twist_stamped") {
             if (!cmd_vel_stamped_pub_) {
                 velocity_gate_.revoke();
-                checkVelocityWatchdog();
                 return false;
             }
             geometry_msgs::msg::TwistStamped stamped;
@@ -267,7 +275,6 @@ bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocit
         } else {
             if (!cmd_vel_pub_) {
                 velocity_gate_.revoke();
-                checkVelocityWatchdog();
                 return false;
             }
             cmd_vel_pub_->publish(twist);
@@ -275,13 +282,13 @@ bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocit
         return true;
     } catch (const std::exception& e) {
         velocity_gate_.revoke();
-        checkVelocityWatchdog();
         RCLCPP_ERROR(get_logger(), "Leased velocity DDS publish failed: %s", e.what());
         return false;
     }
 }
 
 void BaseControlNode::checkVelocityWatchdog() {
+    std::lock_guard<std::mutex> publish_lock(velocity_publish_mutex_);
     if (!velocity_gate_.stopPending(rc::api::v2::VelocityGate::Clock::now())) return;
     // Only the configured cmd_vel publisher is used. A failed publish must
     // leave the gate latched so the next timer tick retries the stop.
