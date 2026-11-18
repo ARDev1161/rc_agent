@@ -1494,3 +1494,9 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - Next: trusted session/lease issuance, reverse v2 gRPC command transport, operator SI joystick -> guarded DDS, minimal motion/stop smoke. Documentation branches and defaults unchanged.
 
 - Follow-up rc_agent [`67b827e7`](https://github.com/ARDev1161/rc_agent/commit/67b827e7511f3ed22733cce4c035c971bd4eb066): lock now covers gate admission as well as DDS publication, preventing concurrent accepted commands from publishing out of sequence. Rejected commands leave latched zero for the 50 ms watchdog instead of calling it recursively under the same lock. New exact-HEAD CI pending.
+
+
+## Handoff — 2026-11-18, remove unreachable legacy velocity paths
+- AmurCore: removed unused `ManualControl::baseControlProcess` declaration/definition that could write unleased joystick velocity to `Controls`; active `update()` continues to force zero on generic basecontrol. rc_agent: removed unused `basecontrol.input_min`, `input_max`, `input_deadzone`, `max_linear_speed`, `max_angular_speed` from ROS2 YAML (these parameters are not declared/consumed by current BaseControlNode). This does NOT enable remote velocity.
+- P1 manual acceptance PENDING; P2 IN PROGRESS. No shared protobuf changes or default/docs branch merges. Qt5/ROS2/Gazebo local tests NOT RUN; inspect new feature HEAD CI for these changes.
+- Next: trusted v2 session/lease transport, joystick SI sender, gate-to-DDS and minimal motion/stop smoke. Do not revive legacy scaling.
