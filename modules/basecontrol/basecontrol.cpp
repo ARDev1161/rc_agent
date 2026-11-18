@@ -235,20 +235,22 @@ bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocit
                                             const std::string& lease, bool deadman) {
     // Admission checks TTL, monotonic sequence, finite SI values and lease identity.
     // No scaling or legacy Controls path is involved.
+    // Serialize admission as well as publication: concurrent commands must
+    // not publish out of sequence or race an emergency stop.
+    std::lock_guard<std::mutex> publish_lock(velocity_publish_mutex_);
     const auto now = rc::api::v2::VelocityGate::Clock::now();
     if (velocity.frame_id() != cmd_vel_frame_id_) {
         velocity_gate_.revoke();
-        checkVelocityWatchdog();
+        // The 50 ms watchdog publishes the latched zero after this lock releases.
         return false;
     }
     if (!velocity_gate_.admit(velocity, session, lease, deadman, now)) {
-        checkVelocityWatchdog();
+        // The 50 ms watchdog publishes the latched zero after this lock releases.
         return false;
     }
 
     // A watchdog stop can race with admission. Hold the DDS publication lock
     // and recheck the monotonic deadline before emitting any nonzero motion.
-    std::lock_guard<std::mutex> publish_lock(velocity_publish_mutex_);
     if (velocity_gate_.expired(rc::api::v2::VelocityGate::Clock::now())) {
         velocity_gate_.revoke();
         return false; // Timer publishes the latched zero without lock recursion.
