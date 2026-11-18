@@ -5,8 +5,3 @@ basecontrol_monitor:
     basecontrol.cmd_vel_frame_id: 'base_link'
     basecontrol.cmd_vel_smoothed_topic: '/cmd_vel_smoothed'
     basecontrol.cmd_vel_nav_topic: '/cmd_vel_nav'
-    basecontrol.input_min: -255.0
-    basecontrol.input_max: 255.0
-    basecontrol.max_linear_speed: 0.25
-    basecontrol.max_angular_speed: 0.8
-    basecontrol.input_deadzone: 3.0
