@@ -19,7 +19,7 @@ public:
     static void arm(BaseControlNode& node, unsigned ttl_ms) {
         using Gate = rc::api::v2::VelocityGate;
         const auto now = Gate::Clock::now();
-        node.velocity_gate_.grant("test-session", "test-lease", now);
+        node.velocity_gate_.grant("test-session", "test-lease", now, std::chrono::milliseconds(5000));
         rc::api::v2::Velocity command;
         command.set_sequence(1);
         // Arm with actual nonzero SI motion; the watchdog must publish zero,
@@ -46,7 +46,7 @@ public:
     }
     static void grantNext(BaseControlNode& node) {
         node.velocity_gate_.grant("next-session", "next-lease",
-                                  rc::api::v2::VelocityGate::Clock::now());
+                                  rc::api::v2::VelocityGate::Clock::now(), std::chrono::milliseconds(5000));
     }
     static bool expired(BaseControlNode& node) {
         return node.velocity_gate_.expired(rc::api::v2::VelocityGate::Clock::now());
@@ -306,16 +306,16 @@ rc::api::v2::Velocity makeVelocity(std::uint64_t sequence, unsigned ttl_ms) {
 TEST(VelocityGateContract, ExpiryRequiresPublishedStopBeforeNewLease) {
     Gate gate;
     const auto t0 = Gate::Clock::time_point{} + 10s;
-    gate.grant("session-a", "lease-a", t0);
+    gate.grant("session-a", "lease-a", t0, std::chrono::milliseconds(5000));
     EXPECT_TRUE(gate.admit(makeVelocity(1, 100), "session-a", "lease-a", true, t0));
     EXPECT_FALSE(gate.stopPending(t0 + 99ms));
     EXPECT_TRUE(gate.stopPending(t0 + 100ms));
-    gate.grant("session-b", "lease-b", t0 + 101ms);
+    gate.grant("session-b", "lease-b", t0 + 101ms, std::chrono::milliseconds(5000));
     EXPECT_FALSE(gate.admit(makeVelocity(1, 100), "session-b", "lease-b", true, t0 + 101ms));
     EXPECT_TRUE(gate.stopPending(t0 + 102ms));
     gate.acknowledgeStopPublished();
     EXPECT_FALSE(gate.stopPending(t0 + 103ms));
-    gate.grant("session-b", "lease-b", t0 + 104ms);
+    gate.grant("session-b", "lease-b", t0 + 104ms, std::chrono::milliseconds(5000));
     EXPECT_TRUE(gate.admit(makeVelocity(1, 100), "session-b", "lease-b", true, t0 + 104ms));
 }
 
@@ -325,22 +325,22 @@ TEST(VelocityGateContract, ExpiryRequiresPublishedStopBeforeNewLease) {
 TEST(VelocityGateContract, LateCommandBeforeWatchdogTickRequiresZeroPublish) {
     Gate gate;
     const auto t0 = Gate::Clock::time_point{} + 10s;
-    gate.grant("session-a", "lease-a", t0);
+    gate.grant("session-a", "lease-a", t0, std::chrono::milliseconds(5000));
     ASSERT_TRUE(gate.admit(makeVelocity(1, 100), "session-a", "lease-a", true, t0));
     EXPECT_FALSE(gate.admit(makeVelocity(2, 100), "session-a", "lease-a", true, t0 + 100ms));
     EXPECT_TRUE(gate.stopPending(t0 + 101ms));
-    gate.grant("session-b", "lease-b", t0 + 102ms);
+    gate.grant("session-b", "lease-b", t0 + 102ms, std::chrono::milliseconds(5000));
     EXPECT_FALSE(gate.admit(makeVelocity(1, 100), "session-b", "lease-b", true, t0 + 102ms));
     EXPECT_TRUE(gate.stopPending(t0 + 103ms));
     gate.acknowledgeStopPublished();
-    gate.grant("session-b", "lease-b", t0 + 104ms);
+    gate.grant("session-b", "lease-b", t0 + 104ms, std::chrono::milliseconds(5000));
     EXPECT_TRUE(gate.admit(makeVelocity(1, 100), "session-b", "lease-b", true, t0 + 104ms));
 }
 
 TEST(VelocityGateContract, ReplayedSequenceRevokesLeaseAndLatchesStop) {
     Gate gate;
     const auto t0 = Gate::Clock::time_point{} + 10s;
-    gate.grant("session", "lease", t0);
+    gate.grant("session", "lease", t0, std::chrono::milliseconds(5000));
     EXPECT_TRUE(gate.admit(makeVelocity(7, 500), "session", "lease", true, t0));
     EXPECT_FALSE(gate.admit(makeVelocity(7, 500), "session", "lease", true, t0 + 1ms));
     EXPECT_TRUE(gate.stopPending(t0 + 2ms));
@@ -350,7 +350,7 @@ TEST(VelocityGateContract, ReplayedSequenceRevokesLeaseAndLatchesStop) {
 TEST(VelocityGateContract, MonotonicRollbackRevokesAfterAcceptedMotion) {
     Gate gate;
     const auto t0 = Gate::Clock::time_point{} + 10s;
-    gate.grant("session", "lease", t0);
+    gate.grant("session", "lease", t0, std::chrono::milliseconds(5000));
     EXPECT_TRUE(gate.admit(makeVelocity(1, 500), "session", "lease", true, t0 + 20ms));
     EXPECT_FALSE(gate.admit(makeVelocity(2, 500), "session", "lease", true, t0 + 19ms));
     EXPECT_TRUE(gate.stopPending(t0 + 21ms));
@@ -359,7 +359,7 @@ TEST(VelocityGateContract, MonotonicRollbackRevokesAfterAcceptedMotion) {
 TEST(VelocityGateContract, InvalidNonFiniteMotionRevokesWithoutUnlockingStop) {
     Gate gate;
     const auto t0 = Gate::Clock::time_point{} + 10s;
-    gate.grant("session", "lease", t0);
+    gate.grant("session", "lease", t0, std::chrono::milliseconds(5000));
     EXPECT_TRUE(gate.admit(makeVelocity(1, 500), "session", "lease", true, t0));
     auto invalid = makeVelocity(2, 500);
     invalid.mutable_angular()->set_z(std::numeric_limits<double>::infinity());
@@ -370,14 +370,14 @@ TEST(VelocityGateContract, InvalidNonFiniteMotionRevokesWithoutUnlockingStop) {
 TEST(VelocityGateContract, WrongSessionRevokesMotionAndRequiresStopBeforeRegrant) {
     Gate gate;
     const auto t0 = Gate::Clock::time_point{} + 10s;
-    gate.grant("session-a", "lease-a", t0);
+    gate.grant("session-a", "lease-a", t0, std::chrono::milliseconds(5000));
     ASSERT_TRUE(gate.admit(makeVelocity(1, 500), "session-a", "lease-a", true, t0));
     EXPECT_FALSE(gate.admit(makeVelocity(2, 500), "session-b", "lease-a", true, t0 + 1ms));
     EXPECT_TRUE(gate.stopPending(t0 + 2ms));
-    gate.grant("session-b", "lease-b", t0 + 3ms);
+    gate.grant("session-b", "lease-b", t0 + 3ms, std::chrono::milliseconds(5000));
     EXPECT_FALSE(gate.admit(makeVelocity(1, 500), "session-b", "lease-b", true, t0 + 4ms));
     gate.acknowledgeStopPublished();
-    gate.grant("session-b", "lease-b", t0 + 5ms);
+    gate.grant("session-b", "lease-b", t0 + 5ms, std::chrono::milliseconds(5000));
     EXPECT_TRUE(gate.admit(makeVelocity(1, 500), "session-b", "lease-b", true, t0 + 5ms));
 }
 
@@ -390,15 +390,15 @@ TEST(VelocityGateContract, EmptyReplacementCredentialsCannotKeepMotionAlive) {
              std::pair<std::string, std::string>{"", "lease-b"},
              std::pair<std::string, std::string>{"session-b", ""}}) {
         Gate gate;
-        gate.grant("session-a", "lease-a", t0);
+        gate.grant("session-a", "lease-a", t0, std::chrono::milliseconds(5000));
         ASSERT_TRUE(gate.admit(makeVelocity(1, 500), "session-a", "lease-a", true, t0));
-        gate.grant(credentials.first, credentials.second, t0 + 1ms);
+        gate.grant(credentials.first, credentials.second, t0 + 1ms, std::chrono::milliseconds(5000));
         EXPECT_TRUE(gate.stopPending(t0 + 2ms));
         EXPECT_FALSE(gate.admit(makeVelocity(2, 500), "session-a", "lease-a", true, t0 + 3ms));
-        gate.grant("session-b", "lease-b", t0 + 4ms);
+        gate.grant("session-b", "lease-b", t0 + 4ms, std::chrono::milliseconds(5000));
         EXPECT_FALSE(gate.admit(makeVelocity(1, 500), "session-b", "lease-b", true, t0 + 4ms));
         gate.acknowledgeStopPublished();
-        gate.grant("session-b", "lease-b", t0 + 5ms);
+        gate.grant("session-b", "lease-b", t0 + 5ms, std::chrono::milliseconds(5000));
         EXPECT_TRUE(gate.admit(makeVelocity(1, 500), "session-b", "lease-b", true, t0 + 5ms));
     }
 }
@@ -407,13 +407,13 @@ TEST(VelocityGateContract, WrongLeaseAndInvalidTtlFailClosed) {
     const auto t0 = Gate::Clock::time_point{} + 10s;
     for (const auto invalid_ttl : {0u, 1001u}) {
         Gate gate;
-        gate.grant("session", "lease", t0);
+        gate.grant("session", "lease", t0, std::chrono::milliseconds(5000));
         ASSERT_TRUE(gate.admit(makeVelocity(1, 500), "session", "lease", true, t0));
         EXPECT_FALSE(gate.admit(makeVelocity(2, invalid_ttl), "session", "lease", true, t0 + 1ms));
         EXPECT_TRUE(gate.stopPending(t0 + 2ms));
     }
     Gate gate;
-    gate.grant("session", "lease", t0);
+    gate.grant("session", "lease", t0, std::chrono::milliseconds(5000));
     ASSERT_TRUE(gate.admit(makeVelocity(1, 500), "session", "lease", true, t0));
     EXPECT_FALSE(gate.admit(makeVelocity(2, 500), "session", "other-lease", true, t0 + 1ms));
     EXPECT_TRUE(gate.stopPending(t0 + 2ms));
