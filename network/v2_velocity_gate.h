@@ -3,6 +3,7 @@
 // The gRPC handler must authenticate the session and grant/revoke the lease;
 // constructing this gate does not enable remote motion.
 #include <chrono>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <string>
@@ -13,13 +14,15 @@ namespace rc::api::v2 {
 class VelocityGate {
 public:
     using Clock = std::chrono::steady_clock;
-    void grant(const std::string& session, const std::string& lease, Clock::time_point now) {
+    void grant(const std::string& session, const std::string& lease, Clock::time_point now, std::chrono::milliseconds duration) {
         std::lock_guard<std::mutex> lock(mutex_);
         revokeLocked();
-        if (session.empty() || lease.empty() || pending_stop_) return;
+        if (session.empty() || lease.empty() || pending_stop_ ||
+            duration.count() <= 0 || duration > std::chrono::seconds(60)) return;
         session_ = session;
         lease_ = lease;
         lease_started_ = now;
+        lease_deadline_ = now + duration;
         active_ = true;
     }
     void revoke() {
@@ -30,7 +33,8 @@ public:
                const std::string& lease, bool deadman, Clock::time_point now) {
         std::lock_guard<std::mutex> lock(mutex_);
         if (pending_stop_ || !active_ || !deadman || session != session_ || lease != lease_ ||
-            now < lease_started_ || (has_sequence_ && now < last_accepted_) ||
+            now < lease_started_ || now >= lease_deadline_ ||
+            (has_sequence_ && now < last_accepted_) ||
             (has_sequence_ && now >= deadline_) ||
             cmd.valid_for_ms() == 0 || cmd.valid_for_ms() > 1000 ||
             (has_sequence_ && cmd.sequence() <= last_sequence_) ||
@@ -45,7 +49,7 @@ public:
             revokeLocked();
             return false;
         }
-        deadline_ = now + std::chrono::milliseconds(cmd.valid_for_ms());
+        deadline_ = std::min(lease_deadline_, now + std::chrono::milliseconds(cmd.valid_for_ms()));
         last_accepted_ = now;
         last_sequence_ = cmd.sequence();
         has_sequence_ = true;
@@ -53,7 +57,7 @@ public:
     }
     bool expired(Clock::time_point now) const {
         std::lock_guard<std::mutex> lock(mutex_);
-        return !active_ || !has_sequence_ || now >= deadline_;
+        return !active_ || !has_sequence_ || now >= deadline_ || now >= lease_deadline_;
     }
     // Called by the eventual ROS watchdog on a monotonic timer. Returns true
     // exactly once when an admitted motion command has timed out; the caller
@@ -65,7 +69,7 @@ public:
     bool stopPending(Clock::time_point now) {
         std::lock_guard<std::mutex> lock(mutex_);
         // A monotonic clock regression is unsafe even without a new command.
-        if (active_ && has_sequence_ && (now < last_accepted_ || now >= deadline_)) revokeLocked();
+        if (active_ && has_sequence_ && (now < last_accepted_ || now >= deadline_ || now >= lease_deadline_)) revokeLocked();
         return pending_stop_;
     }
     void acknowledgeStopPublished() {
@@ -84,10 +88,11 @@ private:
         last_accepted_ = Clock::time_point{};
         last_sequence_ = 0;
         deadline_ = Clock::time_point{};
+        lease_deadline_ = Clock::time_point{};
     }
     mutable std::mutex mutex_;
     std::string session_, lease_;
-    Clock::time_point lease_started_{}, deadline_{}, last_accepted_{};
+    Clock::time_point lease_started_{}, lease_deadline_{}, deadline_{}, last_accepted_{};
     std::uint64_t last_sequence_ = 0;
     bool active_ = false, has_sequence_ = false, pending_stop_ = false;
 };
