@@ -69,6 +69,8 @@ private:
 
     // Dormant until an authenticated v2 transport explicitly grants a lease.
     rc::api::v2::VelocityGate velocity_gate_;
+    // Serialize guarded motion and watchdog/emergency zero DDS publication.
+    std::mutex velocity_publish_mutex_;
     rclcpp::TimerBase::SharedPtr velocity_watchdog_timer_;
 
 };
