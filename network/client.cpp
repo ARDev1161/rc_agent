@@ -384,6 +384,7 @@ grpc::Status grpcClient::ZoneStream()
                     std::lock_guard<std::mutex> lock(*muMap);
                     if (map_ && (!has_seq || map_->zone_seq() != last_seq)) {
                         *state.mutable_zone_map() = map_->zone_map();
+                        state.set_zone_seq(map_->zone_seq());
                         last_seq = map_->zone_seq();
                         has_seq = true;
                         changed = true;
