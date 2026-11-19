@@ -1525,3 +1525,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - AmurCore production: `network/server.h/.cpp` now increments `map_generation_` whenever the bound map state is replaced and rejects MapStream, PoseStream and ZoneStream updates from older streams, including graceful EOF after a rebind. Source commits: `bc4f6ad6`, `6ab381df`, `c4f638dd`. This prevents a previous robot's delayed map/pose/zone data from entering the newly bound map. No shared protobuf changes.
 - rc_agent production: unchanged this checkpoint; its current map streaming client and robot-side transport are not modified. No master/dev/documentation merges.
 - P1 manual acceptance PENDING; owner-authorized P2 IN PROGRESS. Local Qt5/ROS2/Gazebo tests NOT RUN; current-HEAD Actions NOT VERIFIED. This map isolation is NOT the missing v2 motion path. Next: trusted v2 session/lease gRPC transport, joystick SI sender, VelocityGate DDS path, and minimal stop smoke; avoid additional unrelated test proliferation.
+
+
+## Handoff — 2026-11-19, map payload stream isolation
+- AmurCore source [6252a3c2](https://github.com/ARDev1161/AmurCore/commit/6252a3c24c45863139718cabb0ad5be50e3ac291): MapStream advances map_seq only when the incoming message contains a map. Pose/zone-only messages can no longer reset map revision without a map payload.
+- rc_agent source [4811ce59](https://github.com/ARDev1161/rc_agent/commit/4811ce59da2dcbe803b655ab2821b32d10fc0c88): MapStream sends only map/map_seq, clearing duplicated pose/zone/zone_seq; PoseStream and ZoneStream retain ownership of their respective state. Reconnect still sends the first map snapshot.
+- Scope: focused map transport bugfix, no shared protobuf changes, no v2 motion authorization, no changes to documentation/default branches. P1 manual hardware acceptance PENDING; P2 owner-authorized IN PROGRESS.
+- Validation: source inspection and paired patch application only; local Qt5/ROS2/Gazebo tests NOT RUN (checkout/build unavailable). Verify GitHub Actions on the new PLAN HEAD, not prior SHA. Next product priority: trusted session/lease and SI joystick-to-VelocityGate gRPC transport with TTL/deadman/zero stop.
