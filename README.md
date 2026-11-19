@@ -294,3 +294,32 @@ service MapService {
 ```
 
 - **GetMap(GetMapRequest) -> GetMapResponse** - Retrieves the current map of the environment.
+
+
+## Experimental RC API v2 capability advertisement (feature branch)
+
+The current transport remains the existing gRPC `Sensors`/`Controls` exchange;
+the extension `Sensors.robot_info = 9` is additive. To opt into capability
+advertisement, set a **stable, unique** `Amur.API.robot_id` in `robot.cfg`
+(default is empty/legacy). Edit `Amur.API.capabilities` and
+`Amur.API.velocity_axes` to describe the robot's existing local interfaces:
+
+```libconfig
+Amur: {
+  API: {
+    robot_id = "robot-001";
+    display_name = "Hallway robot";
+    capabilities = ("manual.velocity", "navigation.nav2", "map.2d", "video");
+    velocity_axes = ("linear.x", "angular.z");
+  };
+};
+```
+
+You may supply the file path via the ROS 2 parameter `robot_config_path`
+(default `robot.cfg`, relative to the process working directory).
+Only semantic capability IDs and axis names are sent to AmurCore.
+The velocity v2 message is **defined but not yet connected** to motion
+publishers: do not assume XYZ/6DoF teleop has been implemented. Legacy joystick
+range/config and Nav2/GStreamer logic remain unchanged.
+
+See [PLAN.md](PLAN.md) for binding, safety, session and test phases.

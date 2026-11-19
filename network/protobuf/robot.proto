@@ -10,6 +10,7 @@ import "map.proto";
 import "navigation.proto";
 import "credentials.proto";
 import "video.proto";
+import "rc_api_v2.proto";
 
 message Controls{
      message Light{
@@ -48,6 +49,8 @@ message Sensors{
      IMU.IMURawData imu = 6;
      int32 CPUTemperature = 7;
      video.VideoStream video_stream = 8;
+     // Additive v2 capability announcement; old receivers ignore field 9.
+     .rc.api.v2.RobotInfo robot_info = 9;
 }
 
 service ClientOnRobot{

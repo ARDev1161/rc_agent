@@ -86,7 +86,8 @@ int NetworkController::runClient(std::string &server_address, bool tryConnectIfF
         grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials()),
         controls_,
         sensors_,
-        map_
+        map_,
+        tryConnectIfFailed
     );
 
     size_t pos = server_address.find(':');
@@ -176,7 +177,7 @@ int NetworkController::runClient(bool tryConnectToUnverified)
 
 int NetworkController::runServer(std::string &address_mask)
 {
-    std::thread thr([&]()
+    std::thread thr([this, address_mask]()
      {
       grpc::EnableDefaultHealthCheckService(true);
       grpc::reflection::InitProtoReflectionServerBuilderPlugin();
@@ -193,6 +194,11 @@ int NetworkController::runServer(std::string &address_mask)
 
       // Finally assemble the server.
       std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+      if (!server) {
+          // A failed bind must not dereference a null server in the detached worker.
+          std::cerr << "Failed to start gRPC server on " << address_mask << std::endl;
+          return;
+      }
       std::cout << "Server listening on " << address_mask << std::endl;
 
       // Wait for the server to shutdown. Note that some other thread must be

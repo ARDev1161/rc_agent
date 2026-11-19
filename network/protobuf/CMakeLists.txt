@@ -46,7 +46,8 @@ foreach(proto_file ${PROTO_FILES})
     add_custom_command(
         OUTPUT "${proto_src}" "${proto_hdr}" "${grpc_src}" "${grpc_hdr}"
         COMMAND ${_PROTOBUF_PROTOC}
-        ARGS --grpc_out "${GENERATED_PROTO_DIR}"
+        ARGS --experimental_allow_proto3_optional
+             --grpc_out "${GENERATED_PROTO_DIR}"
              --cpp_out "${GENERATED_PROTO_DIR}"
              -I "${PROTO_DIR}"
              --plugin=protoc-gen-grpc="${_GRPC_CPP_PLUGIN_EXECUTABLE}"
