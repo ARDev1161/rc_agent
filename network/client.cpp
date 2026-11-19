@@ -275,6 +275,11 @@ grpc::Status grpcClient::MapStream()
                     std::lock_guard<std::mutex> lock(*muMap);
                     if (map_ && (!has_seq || map_->map_seq() != last_seq)) {
                         outgoing = *map_;
+                        // Pose and zones have independent streams. A map
+                        // revision must not replay stale copies of either.
+                        outgoing.clear_robotpose();
+                        outgoing.clear_zone_map();
+                        outgoing.clear_zone_seq();
                         last_seq = outgoing.map_seq();
                         has_seq = true;
                         changed = true;
