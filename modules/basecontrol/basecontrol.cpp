@@ -158,8 +158,15 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
     }
     // Distinct ROS output names are a safety boundary: an auxiliary publisher
     // must never alias the guarded cmd_vel output and bypass its watchdog.
-    if (smoothed_topic == cmd_vel_topic_ || nav_topic == cmd_vel_topic_ ||
-        smoothed_topic == nav_topic) {
+    // ROS resolves "cmd_vel" and "/cmd_vel" to the same topic in the root
+    // namespace. Compare their canonical names, not their config spelling,
+    // or an auxiliary publisher could alias the lease-guarded output.
+    const auto canonical_topic = [](const std::string &topic) {
+        return topic.front() == '/' ? topic : "/" + topic;
+    };
+    if (canonical_topic(smoothed_topic) == canonical_topic(cmd_vel_topic_) ||
+        canonical_topic(nav_topic) == canonical_topic(cmd_vel_topic_) ||
+        canonical_topic(smoothed_topic) == canonical_topic(nav_topic)) {
         throw std::invalid_argument("basecontrol velocity output topics must be distinct");
     }
     cmd_vel_smoothed_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(smoothed_topic, 10);
