@@ -172,6 +172,19 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
     cmd_vel_smoothed_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(smoothed_topic, 10);
     cmd_vel_unsafety_pub_ = this->create_publisher<geometry_msgs::msg::Twist>(nav_topic, 10);
 
+    // ROS namespace expansion and remapping can alias otherwise distinct
+    // configured names. Check the actual DDS publisher names as well: an
+    // auxiliary output must never bypass the lease-guarded output.
+    const std::string guarded_resolved = cmd_vel_stamped_pub_
+        ? cmd_vel_stamped_pub_->get_topic_name() : cmd_vel_pub_->get_topic_name();
+    const std::string smoothed_resolved = cmd_vel_smoothed_pub_->get_topic_name();
+    const std::string nav_resolved = cmd_vel_unsafety_pub_->get_topic_name();
+    if (guarded_resolved == smoothed_resolved ||
+        guarded_resolved == nav_resolved ||
+        smoothed_resolved == nav_resolved) {
+        throw std::invalid_argument("basecontrol resolved velocity output topics must be distinct");
+    }
+
     // Monotonic watchdog remains active independently of network callbacks.
     // The gate is fail-closed: without an authenticated lease, no motion is sent.
     velocity_watchdog_timer_ = this->create_wall_timer(
