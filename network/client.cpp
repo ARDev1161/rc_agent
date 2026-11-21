@@ -33,13 +33,14 @@ grpc::Status runStreamWithRetry(const std::string &stream_name,
         ActiveContextGuard<UnregisterFn> context_guard{context, unregister_context};
         auto stream = stream_factory(context);
         if (!stream) {
-            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "Stream factory returned null");
+            // Stream creation can fail transiently during reconnect. Keep the
+            // configured retry policy instead of terminating this worker.
+            status = grpc::Status(grpc::StatusCode::UNAVAILABLE, "Stream factory returned null");
+        } else {
+            pump_loop(*stream);
+            stream->WritesDone();
+            status = stream->Finish();
         }
-
-        pump_loop(*stream);
-
-        stream->WritesDone();
-        status = stream->Finish();
         // An OK Finish after peer EOF is still a closed live stream.
         // Reconnect when requested, but preserve one-shot and explicit stop.
         if (status.ok() && (!retry_enabled || stopped_flag.load())) {
