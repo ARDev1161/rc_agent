@@ -200,8 +200,15 @@ grpc::Status grpcClient::DataStreamExchange()
         [this](grpc::ClientContext &context) { return registerStreamContext(context); },
         [this](grpc::ClientContext &context) { unregisterStreamContext(context); },
         [this](grpc::ClientContext &context) {
-            return std::shared_ptr<grpc::ClientReaderWriter<Sensors, Controls>>(
+            auto stream = std::shared_ptr<grpc::ClientReaderWriter<Sensors, Controls>>(
                 stub_->DataStreamExchange(&context));
+            if (!stream) {
+                // Failed stream creation must invalidate the previous command
+                // snapshot just like EOF and reconnect do.
+                std::lock_guard<std::mutex> lock(*muClient);
+                if (controls_) controls_->Clear();
+            }
+            return stream;
         },
         [this](grpc::ClientReaderWriter<Sensors, Controls> &stream) {
             while (!stoppedStream)

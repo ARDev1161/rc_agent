@@ -1544,3 +1544,7 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - ZoneState now carries `zone_seq = 2` in each repository's `network/protobuf/map.proto` (existing field 1 unchanged). rc_agent copies the revision under the map mutex with the ZoneMap snapshot; AmurCore receives both together. This fixes stale zone revision after zone updates, including empty zone maps. AmurCore gRPC smoke asserts latest revision 23 after three zone snapshots.
 - P1 manual hardware acceptance PENDING; owner-authorized P2 IN PROGRESS. This does not enable velocity or close the session/lease transport gap. No default or documentation branch changes.
 - Local Qt5/ROS2/Gazebo/hardware NOT RUN. Inspect exact-HEAD Actions for build/loopback results; next: trusted session/lease RPC and SI joystick command to VelocityGate with watchdog stop.
+
+### 2026-11-21 — fail-closed DataStreamExchange stream creation
+- rc_agent: when creating the Controls stream returns null, clear cached Controls under muClient before returning FAILED_PRECONDITION. This closes the gap where EOF/retry clears controls but a failed stream factory did not. No new velocity authorization or motor path was enabled.
+- Verification: source-level exact replacement checked; local ROS2/colcon build NOT RUN (environment lacks checkout/toolchain). GitHub Actions status must be checked against the resulting commit. AmurCore unchanged; no shared protobuf change. P1 hardware gate remains open; P2 in progress. Next: trusted session/lease/velocity transport and integration test.
