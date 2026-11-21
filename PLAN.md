@@ -1548,3 +1548,9 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 ### 2026-11-21 — fail-closed DataStreamExchange stream creation
 - rc_agent: when creating the Controls stream returns null, clear cached Controls under muClient before returning FAILED_PRECONDITION. This closes the gap where EOF/retry clears controls but a failed stream factory did not. No new velocity authorization or motor path was enabled.
 - Verification: source-level exact replacement checked; local ROS2/colcon build NOT RUN (environment lacks checkout/toolchain). GitHub Actions status must be checked against the resulting commit. AmurCore unchanged; no shared protobuf change. P1 hardware gate remains open; P2 in progress. Next: trusted session/lease/velocity transport and integration test.
+
+
+### 2026-11-21 — transient gRPC stream factory reconnect (cross-repo handoff)
+- rc_agent production commit [978c53cd](https://github.com/ARDev1161/rc_agent/commit/978c53cd6acfba4e770f7aee18ddd12e1c3a8d83): a null DataStreamExchange/MapStream/PoseStream/ZoneStream factory result now enters the existing retry/backoff policy when retry is enabled, instead of terminating the stream worker. With retry disabled it returns UNAVAILABLE. The Controls factory continues to invalidate stale cached Controls on null, so retry cannot reuse a previous command snapshot.
+- AmurCore production unchanged at b7511420e83498029703c851fdefe5ff074e0ac3; no shared proto edits. This is transport resilience, NOT authenticated velocity authorization. P1 hardware/manual gate OPEN; P2 owner-authorized IN PROGRESS.
+- Local ROS2/Qt5/Gazebo tests NOT RUN (direct git clone DNS unavailable); verify new rc_agent exact-HEAD Actions before calling it green. Next: implement trusted v2 session/lease/velocity transport, SI joystick command and TTL/deadman stop smoke; preserve Nav2 and all ROS topic allowlists.
