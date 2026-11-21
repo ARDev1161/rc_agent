@@ -1559,3 +1559,8 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 ### 2026-11-21 — ROS velocity topic alias guard
 - rc_agent production [445f999d](https://github.com/ARDev1161/rc_agent/commit/445f999d10e0d00c557f05faf865fbcc9c66403b): reject root-relative/absolute spelling aliases (`cmd_vel` vs `/cmd_vel`) when checking distinct guarded and auxiliary velocity output topics. Previously string-only comparison allowed the same ROS topic under different spellings, potentially bypassing the leased output. Existing distinct topic configurations remain unchanged; no proto edits.
 - AmurCore production unchanged. P1 manual gate OPEN; owner-authorized P2 IN PROGRESS. Local ROS2/Qt5/Gazebo NOT RUN (git DNS unavailable). Verify exact-HEAD Actions before claiming green. Next: trusted session/lease/velocity RPC and SI joystick sender with watchdog stop; no legacy fallback.
+
+
+### 2026-11-21 — resolved ROS velocity publisher alias guard
+- rc_agent source [e218eb2e](https://github.com/ARDev1161/rc_agent/commit/e218eb2e4e300ac2339cbb8fb14113fbe6a53619): after ROS 2 creates the guarded cmd_vel and two auxiliary publishers, compare their actual resolved topic names (including ROS namespace and remapping). Reject construction if any alias, preventing an auxiliary output from bypassing the lease/watchdog boundary. The previous config-string check remains. AmurCore production unchanged; shared proto unchanged.
+- Verification: source edit applied; local ROS2/Qt5 builds NOT RUN (direct Git checkout DNS failure). Exact-HEAD Actions must be checked; hardware P1 gate OPEN, P2 IN PROGRESS. This does not enable remote teleop. Next: authorized session/lease/velocity transport and SI joystick path with TTL/deadman/watchdog stop smoke.
