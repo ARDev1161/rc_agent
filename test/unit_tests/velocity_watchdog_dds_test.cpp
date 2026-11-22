@@ -31,6 +31,18 @@ public:
         ASSERT_TRUE(node.velocity_gate_.admit(
             command, "test-session", "test-lease", true, now));
     }
+    static bool send(BaseControlNode& node, std::uint64_t sequence,
+                     double linear_x, double linear_y) {
+        node.velocity_gate_.grant("test-session", "test-lease",
+            rc::api::v2::VelocityGate::Clock::now(), std::chrono::milliseconds(5000));
+        rc::api::v2::Velocity command;
+        command.set_sequence(sequence);
+        command.set_valid_for_ms(1000);
+        command.set_frame_id("base_link");
+        command.mutable_linear()->set_x(linear_x);
+        command.mutable_linear()->set_y(linear_y);
+        return node.publishLeasedVelocity(command, "test-session", "test-lease", true);
+    }
     static bool pending(BaseControlNode& node) {
         return node.velocity_gate_.stopPending(rc::api::v2::VelocityGate::Clock::now());
     }
@@ -58,6 +70,50 @@ protected:
     static void SetUpTestSuite() { rclcpp::init(0, nullptr); }
     static void TearDownTestSuite() { rclcpp::shutdown(); }
 };
+
+// Exercise the production DDS boundary, not just the transport-independent gate.
+// A robot advertising only linear.x must reject lateral motion and publish
+// an emergency zero before any new lease can be used.
+TEST_F(WatchdogDdsTest, UnsupportedRobotAxisRevokesAndStops)
+{
+    Base::BaseControl controls;
+    std::mutex mutex;
+    rclcpp::NodeOptions options;
+    options.parameter_overrides({
+        rclcpp::Parameter("basecontrol.odom_topic", "/watchdog_axes/odom"),
+        rclcpp::Parameter("basecontrol.cmd_vel_topic", "/watchdog_axes/cmd_vel"),
+        rclcpp::Parameter("basecontrol.velocity_axes", std::vector<std::string>{"linear.x"})});
+    auto node = std::make_shared<BaseControlNode>(&controls, mutex, options);
+    auto observer = std::make_shared<rclcpp::Node>("watchdog_axes_observer");
+    std::vector<geometry_msgs::msg::Twist> received;
+    auto sub = observer->create_subscription<geometry_msgs::msg::Twist>(
+        "/watchdog_axes/cmd_vel", 10,
+        [&](geometry_msgs::msg::Twist::SharedPtr msg) { received.push_back(*msg); });
+    rclcpp::executors::SingleThreadedExecutor executor;
+    executor.add_node(node);
+    executor.add_node(observer);
+    const auto discovery = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (node->count_subscribers("/watchdog_axes/cmd_vel") == 0 &&
+           std::chrono::steady_clock::now() < discovery) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_GT(node->count_subscribers("/watchdog_axes/cmd_vel"), 0u);
+    ASSERT_TRUE(VelocityWatchdogTestPeer::send(*node, 1, 0.2, 0.0));
+    ASSERT_FALSE(VelocityWatchdogTestPeer::send(*node, 2, 0.0, 0.2));
+    ASSERT_TRUE(VelocityWatchdogTestPeer::pending(*node));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (received.size() < 2 && std::chrono::steady_clock::now() < deadline) {
+        executor.spin_some();
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    ASSERT_EQ(received.size(), 2u);
+    EXPECT_DOUBLE_EQ(received.front().linear.x, 0.2);
+    EXPECT_DOUBLE_EQ(received.front().linear.y, 0.0);
+    EXPECT_DOUBLE_EQ(received.back().linear.x, 0.0);
+    EXPECT_DOUBLE_EQ(received.back().linear.y, 0.0);
+    EXPECT_FALSE(VelocityWatchdogTestPeer::pending(*node));
+}
 
 TEST_F(WatchdogDdsTest, ExpiredLeasePublishesZeroTwist)
 {
