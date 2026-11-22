@@ -1602,3 +1602,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - rc_agent production commits [17ba17a3](https://github.com/ARDev1161/rc_agent/commit/17ba17a3fe48449c7f4e8a4dd5cbb6f15b831d1d), [c83e59e4](https://github.com/ARDev1161/rc_agent/commit/c83e59e4a50a77d809a0306a7067039440a92ba5): BaseControlNode now rejects unknown or duplicate local ROS2 parameter `basecontrol.velocity_axes` at startup. The guarded DDS output still requires a trusted lease; this does NOT enable remote velocity. No shared proto changes; AmurCore production unchanged.
 - P1 manual/hardware acceptance OPEN, owner-authorized P2 IN PROGRESS. Local ROS2/Qt5/hardware NOT RUN. Exact-HEAD Actions result must be checked separately; do not claim green from older SHA.
 - Next: trusted session/lease/velocity gRPC transport and SI joystick-to-ROS2 with TTL/deadman/watchdog stop. No dev/master/documentation merge.
+
+
+## Handoff — 2026-11-23, pose presence across stream
+- AmurCore `network/server.cpp`: ignore `PoseState` frames without `pose` rather than overwriting the last valid robot pose with default zero. Existing gRPC server smoke now sends an empty pose frame after a valid update and checks preservation. Production commit `826e6e40`; test commit `71418bb2`.
+- rc_agent `network/client.cpp`: PoseStream waits for `has_robotpose()` before sending its first snapshot, rather than manufacturing an origin pose while odometry has not arrived. Production commit `d20e7f55`. Reconnect continues to send the first available pose.
+- Shared proto unchanged. P1 manual hardware/VPN/GUI acceptance OPEN; owner-authorized P2 IN PROGRESS. This is a targeted map/pose correctness fix, **not** the missing trusted session/lease/velocity RPC.
+- Local Qt5/ROS2/Gazebo/hardware: NOT RUN in this environment. Inspect exact-HEAD Actions after this PLAN update; do not infer green from previous runs. Next: implement authenticated session/lease/velocity transport in both repos, SI joystick path, and watchdog zero smoke. No default/documentation branch merges.
