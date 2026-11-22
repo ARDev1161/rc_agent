@@ -44,6 +44,14 @@ public:
         if (!stream->Read(&incoming)) {
             return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT, "Missing map snapshot");
         }
+        // A sequence number alone is not a usable map snapshot.
+        // Catch regressions where the initial empty map consumes the revision.
+        if (!incoming.has_map() || incoming.map().info().width() == 0 ||
+            incoming.map().info().height() == 0 ||
+            incoming.map().data_size() == 0) {
+            return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
+                                "Map snapshot must contain OccupancyGrid data");
+        }
         last_map_seq.store(incoming.map_seq());
         ++map_snapshots;
         map_service::GetMapRequest reply;
