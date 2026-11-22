@@ -7,6 +7,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <memory>
 #include <mutex>
+#include <vector>
 #include "robot.grpc.pb.h"
 #include "../../network/v2_velocity_gate.h"
 
@@ -53,6 +54,7 @@ private:
     std::string cmd_vel_topic_;
     std::string cmd_vel_msg_type_;
     std::string cmd_vel_frame_id_;
+    std::vector<std::string> velocity_axes_; // Trusted local robot descriptor
 
     double actual_linear_vel_ = 0.0;
     double actual_angular_vel_ = 0.0;
