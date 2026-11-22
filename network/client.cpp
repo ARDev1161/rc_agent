@@ -336,7 +336,9 @@ grpc::Status grpcClient::PoseStream()
                 bool changed = false;
                 {
                     std::unique_lock<std::mutex> lock(*muMap);
-                    if (map_) {
+                    // Do not emit a fabricated zero pose before the first
+                    // odometry sample. Reconnect still sends the first real pose.
+                    if (map_ && map_->has_robotpose()) {
                         *state.mutable_pose() = map_->robotpose();
                         if (!has_pose || !poseEquals(state.pose(), last_pose)) {
                             last_pose = state.pose();
