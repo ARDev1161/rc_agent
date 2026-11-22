@@ -46,9 +46,9 @@ public:
         }
         // A sequence number alone is not a usable map snapshot.
         // Catch regressions where the initial empty map consumes the revision.
-        if (!incoming.has_map() || incoming.map().info().width() == 0 ||
-            incoming.map().info().height() == 0 ||
-            incoming.map().data_size() == 0) {
+        if (!incoming.has_map() || incoming.map().width() == 0 ||
+            incoming.map().height() == 0 ||
+            incoming.map().data().empty()) {
             return grpc::Status(grpc::StatusCode::INVALID_ARGUMENT,
                                 "Map snapshot must contain OccupancyGrid data");
         }
