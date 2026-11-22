@@ -207,6 +207,11 @@ int main() {
     auto controls = std::make_shared<Robot::Controls>();
     auto sensors = std::make_shared<Robot::Sensors>();
     auto map = std::make_shared<map_service::GetMapResponse>();
+    // MapStream deliberately waits for a real OccupancyGrid, not map_seq alone.
+    map->mutable_map()->set_width(1);
+    map->mutable_map()->set_height(1);
+    map->mutable_map()->set_resolution(0.05f);
+    map->mutable_map()->set_data(std::string(1, '\0'));
     sensors->mutable_robot_info()->set_robot_id("robot-test");
     sensors->mutable_robot_info()->set_api_major(2);
     auto *cap = sensors->mutable_robot_info()->add_capabilities();
