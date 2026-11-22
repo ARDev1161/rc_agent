@@ -1584,3 +1584,10 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - rc_agent test commit [bbf369f5](https://github.com/ARDev1161/rc_agent/commit/bbf369f52aa33fd59358f28c45a8d8bd94d1e439): existing gRPC client loopback now rejects map_seq-only or empty-grid snapshots and requires nonempty OccupancyGrid dimensions/data. This guards the actual MapStream readiness regression without adding a new framework or altering production behavior.
 - rc_agent production code unchanged; no shared proto change. P1 hardware acceptance PENDING, owner-authorized P2 IN PROGRESS. Prior rc_agent test-fix run [44980178970](https://github.com/ARDev1161/rc_agent/actions/runs/44980178970) all five jobs SUCCESS; new commit CI must be checked separately. Local ROS2/Qt5/Gazebo NOT RUN.
 - Critical product work still missing: authenticated session/lease/velocity RPC, SI joystick sender, TTL/deadman/watchdog end-to-end stop smoke. No dev/master/documentation merge.
+
+
+## Handoff — 2026-11-22 06:24 CET, OccupancyGrid protobuf smoke compile repair
+- Latest rc_agent HEAD `8dd22906` CI [44984657715](https://github.com/ARDev1161/rc_agent/actions/runs/44984657715) FAILED in `grpc-client-loopback` compile only: test used nonexistent `OccupancyGrid.info().width/height` and `data_size()`. Actual `map.proto` exposes direct `width()`, `height()` and `bytes data()`.
+- Fixed `rc_agent/tests/grpc_client_smoke.cpp` to validate `width()`, `height()` and `!data().empty()`; source commit [4f8e0fef](https://github.com/ARDev1161/rc_agent/commit/4f8e0feff9e669fb717be3c0760f1f2af29f4961). Production unchanged in both repositories; shared protobuf unchanged.
+- Previous failing run: rc_agent four jobs SUCCESS (config, protobuf, real-peer, ROS2 Humble), grpc-client-loopback FAILED. AmurCore [44984664032](https://github.com/ARDev1161/AmurCore/actions/runs/44984664032) SUCCESS on `da1220b1`. New rc_agent CI requires exact-HEAD confirmation; local Qt5/ROS2/hardware NOT RUN. P1 manual gate OPEN; owner-authorized P2 IN PROGRESS.
+- Next critical path: authorized session/lease/velocity RPC and SI joystick-to-ROS2 with TTL/deadman/watchdog; no dev/master/documentation merge.
