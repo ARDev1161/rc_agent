@@ -873,6 +873,15 @@ int main(int argc, char **argv)
     rclcpp::Parameter("basecontrol.cmd_vel_topic", base_profile.cmd_vel_topic),
     rclcpp::Parameter("basecontrol.cmd_vel_msg_type", base_profile.cmd_vel_type),
     rclcpp::Parameter("basecontrol.cmd_vel_frame_id", base_profile.cmd_vel_frame),
+    rclcpp::Parameter("basecontrol.velocity_axes", [&]() {
+      std::vector<std::string> axes;
+      for (const auto &cap : sensorsPtr->robot_info().capabilities()) {
+        if (cap.id() == "manual.velocity") {
+          for (const auto &axis : cap.velocity_axes()) axes.push_back(axis);
+        }
+      }
+      return axes;
+    }()),
     rclcpp::Parameter("basecontrol.cmd_vel_smoothed_topic", base_profile.cmd_vel_smoothed_topic),
     rclcpp::Parameter("basecontrol.cmd_vel_nav_topic", base_profile.cmd_vel_nav_topic)
   });
