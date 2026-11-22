@@ -78,19 +78,14 @@ void configureRobotInfo(Sensors &sensors, const std::string &config_path)
   std::vector<std::string> capabilities;
   if (config.searchStringList("Amur.API.capabilities", capabilities) != EXIT_SUCCESS ||
       capabilities.empty()) {
-    RCLCPP_ERROR(rclcpp::get_logger("rc_agent"),
-                 "Robot %s: Amur.API.capabilities must be a nonempty string list",
-                 robot_id.c_str());
-    return;
+    throw std::invalid_argument("Robot " + robot_id + ": Amur.API.capabilities must be a nonempty string list");
   }
 
   std::unordered_set<std::string> seen;
   bool manual_velocity = false;
   for (const auto &id : capabilities) {
     if (id.empty() || !seen.insert(id).second) {
-      RCLCPP_ERROR(rclcpp::get_logger("rc_agent"),
-                   "Robot %s: empty/duplicate capability identifier", robot_id.c_str());
-      return;
+      throw std::invalid_argument("Robot " + robot_id + ": empty/duplicate capability identifier");
     }
     manual_velocity |= (id == "manual.velocity");
   }
@@ -99,9 +94,7 @@ void configureRobotInfo(Sensors &sensors, const std::string &config_path)
   if (manual_velocity) {
     if (config.searchStringList("Amur.API.velocity_axes", axes) != EXIT_SUCCESS ||
         axes.empty()) {
-      RCLCPP_ERROR(rclcpp::get_logger("rc_agent"),
-                   "Robot %s: manual.velocity requires supported axes", robot_id.c_str());
-      return;
+      throw std::invalid_argument("Robot " + robot_id + ": manual.velocity requires supported axes");
     }
     const std::unordered_set<std::string> allowed = {
       "linear.x", "linear.y", "linear.z", "angular.x", "angular.y", "angular.z"
@@ -109,10 +102,7 @@ void configureRobotInfo(Sensors &sensors, const std::string &config_path)
     std::unordered_set<std::string> axis_seen;
     for (const auto &axis : axes) {
       if (!allowed.count(axis) || !axis_seen.insert(axis).second) {
-        RCLCPP_ERROR(rclcpp::get_logger("rc_agent"),
-                     "Robot %s: invalid or duplicate axis '%s'",
-                     robot_id.c_str(), axis.c_str());
-        return;
+        throw std::invalid_argument("Robot " + robot_id + ": invalid or duplicate axis '" + axis + "'");
       }
     }
   }
