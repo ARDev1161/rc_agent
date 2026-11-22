@@ -134,6 +134,20 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
     cmd_vel_frame_id_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_frame_id", "base_link");
     velocity_axes_ = this->declare_parameter<std::vector<std::string>>(
         "basecontrol.velocity_axes", std::vector<std::string>{});
+    // The ROS parameter is a local safety allowlist, not a remote capability grant.
+    // Reject typos and duplicates instead of silently accepting a misconfigured
+    // robot profile whose advertised axes differ from the guarded DDS output.
+    static constexpr const char* kKnownAxes[] = {
+        "linear.x", "linear.y", "linear.z", "angular.x", "angular.y", "angular.z"
+    };
+    std::vector<std::string> seen_axes;
+    for (const auto& axis : velocity_axes_) {
+        if (std::find(std::begin(kKnownAxes), std::end(kKnownAxes), axis) == std::end(kKnownAxes) ||
+            std::find(seen_axes.begin(), seen_axes.end(), axis) != seen_axes.end()) {
+            throw std::invalid_argument("Invalid or duplicate basecontrol.velocity_axes entry: " + axis);
+        }
+        seen_axes.push_back(axis);
+    }
     std::transform(cmd_vel_msg_type_.begin(), cmd_vel_msg_type_.end(), cmd_vel_msg_type_.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
