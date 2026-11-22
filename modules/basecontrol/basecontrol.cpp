@@ -132,6 +132,8 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
     cmd_vel_topic_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_topic", "/cmd_vel");
     cmd_vel_msg_type_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_msg_type", "twist");
     cmd_vel_frame_id_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_frame_id", "base_link");
+    velocity_axes_ = this->declare_parameter<std::vector<std::string>>(
+        "basecontrol.velocity_axes", std::vector<std::string>{});
     std::transform(cmd_vel_msg_type_.begin(), cmd_vel_msg_type_.end(), cmd_vel_msg_type_.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
 
@@ -262,6 +264,19 @@ bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocit
     if (velocity.frame_id() != cmd_vel_frame_id_) {
         velocity_gate_.revoke();
         // The 50 ms watchdog publishes the latched zero after this lock releases.
+        return false;
+    }
+    // Reject unsupported robot axes before publishing, even with a valid lease.
+    const auto supported = [this](const char* axis) {
+        return std::find(velocity_axes_.begin(), velocity_axes_.end(), axis) != velocity_axes_.end();
+    };
+    if ((velocity.linear().x() != 0.0 && !supported("linear.x")) ||
+        (velocity.linear().y() != 0.0 && !supported("linear.y")) ||
+        (velocity.linear().z() != 0.0 && !supported("linear.z")) ||
+        (velocity.angular().x() != 0.0 && !supported("angular.x")) ||
+        (velocity.angular().y() != 0.0 && !supported("angular.y")) ||
+        (velocity.angular().z() != 0.0 && !supported("angular.z"))) {
+        velocity_gate_.revoke();
         return false;
     }
     if (!velocity_gate_.admit(velocity, session, lease, deadman, now)) {
