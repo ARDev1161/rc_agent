@@ -497,6 +497,29 @@ int main() {
         require(pose_reconnect_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
                 "Pose reconnect did not report explicit shutdown");
 
+        // No zone snapshot exists until a ROS zone producer supplies one.
+        // A default zone_seq=0 must not fabricate an empty ZoneMap.
+        grpcClient unready_zone(channel, controls, sensors, map, true);
+        const unsigned zone_initial_count = mock.zone_snapshots.load();
+        auto unready_zone_rpc = std::async(std::launch::async, [&unready_zone]() {
+            return unready_zone.ZoneStream();
+        });
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        const bool no_fabricated_zone = mock.zone_snapshots.load() == zone_initial_count;
+        unready_zone.stopStream();
+        require(unready_zone_rpc.wait_for(std::chrono::seconds(3)) ==
+                    std::future_status::ready,
+                "Unready zone stream did not stop");
+        require(unready_zone_rpc.get().error_code() == grpc::StatusCode::CANCELLED,
+                "Unready zone shutdown did not report cancellation");
+        require(no_fabricated_zone, "ZoneStream fabricated a pre-initialization snapshot");
+        // An explicitly initialized but empty ZoneMap is a valid snapshot.
+        // Subsequent populated -> empty transitions must remain deliverable.
+        {
+            std::lock_guard<std::mutex> lock(*client.getMapMutex());
+            map->mutable_zone_map();
+        }
+
         grpcClient idle_zone(channel, controls, sensors, map, true);
         auto zone_rpc = std::async(std::launch::async, [&idle_zone]() {
             return idle_zone.ZoneStream();
