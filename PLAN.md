@@ -1609,3 +1609,9 @@ New headless integration tests complement the earlier protobuf-only and full-bui
 - rc_agent `network/client.cpp`: PoseStream waits for `has_robotpose()` before sending its first snapshot, rather than manufacturing an origin pose while odometry has not arrived. Production commit `d20e7f55`. Reconnect continues to send the first available pose.
 - Shared proto unchanged. P1 manual hardware/VPN/GUI acceptance OPEN; owner-authorized P2 IN PROGRESS. This is a targeted map/pose correctness fix, **not** the missing trusted session/lease/velocity RPC.
 - Local Qt5/ROS2/Gazebo/hardware: NOT RUN in this environment. Inspect exact-HEAD Actions after this PLAN update; do not infer green from previous runs. Next: implement authenticated session/lease/velocity transport in both repos, SI joystick path, and watchdog zero smoke. No default/documentation branch merges.
+
+
+## Handoff — 2026-11-23, PoseStream CI regression correction
+- On rc_agent HEAD d8d78330, GitHub Actions run [45082831275](https://github.com/ARDev1161/rc_agent/actions/runs/45082831275) FAILED only grpc-client-loopback: existing smoke expected a pose snapshot before any odometry, contradicting new fail-closed PoseStream behavior. ROS2 Humble, protobuf, config, and real peer jobs SUCCESS. AmurCore HEAD 6d2d85c5 run [45082828158](https://github.com/ARDev1161/AmurCore/actions/runs/45082828158) SUCCESS (3/3).
+- rc_agent [13a8fa81](https://github.com/ARDev1161/rc_agent/commit/13a8fa81eeaa1016890287105f36ceea3e7cbf63) corrects existing gRPC smoke: assert no fabricated pre-odometry pose, inject first real odometry under map mutex, then require one snapshot and no duplicates. No production/protobuf change; shared proto untouched.
+- New rc_agent exact-HEAD CI is pending verification; local Qt5/ROS2/hardware NOT RUN. P1 hardware gates OPEN; P2 owner-authorized IN PROGRESS. Next: trusted session/lease/velocity transport and SI joystick with TTL/deadman/watchdog. No merges.
