@@ -281,10 +281,10 @@ grpc::Status grpcClient::MapStream()
                     // Sequence and payload must describe the SAME snapshot.
                     // No map hashing, and no mutex held over gRPC Write/Read.
                     std::lock_guard<std::mutex> lock(*muMap);
-                    if (map_ && map_->has_map() && map_->map().width() > 0 &&
-                        map_->map().height() > 0 &&
-                        map_->map().data().size() ==
-                            static_cast<std::uint64_t>(map_->map().width()) * map_->map().height() &&
+                    if (map_ && map_->has_map() && ((map_->map().width() == 0 && map_->map().height() == 0 && map_->map().data().empty()) ||
+                         (map_->map().width() > 0 && map_->map().height() > 0 &&
+                          map_->map().data().size() ==
+                              static_cast<std::uint64_t>(map_->map().width()) * map_->map().height())) &&
                         (!has_seq || map_->map_seq() != last_seq)) {
                         outgoing = *map_;
                         // Pose and zones have independent streams. A map
