@@ -392,7 +392,8 @@ grpc::Status grpcClient::ZoneStream()
                     // Bind the zone payload to the very sequence we observed.
                     // Never perform RPC I/O with the map mutex held.
                     std::lock_guard<std::mutex> lock(*muMap);
-                    if (map_ && (!has_seq || map_->zone_seq() != last_seq)) {
+                    if (map_ && map_->has_zone_map() &&
+                        (!has_seq || map_->zone_seq() != last_seq)) {
                         *state.mutable_zone_map() = map_->zone_map();
                         state.set_zone_seq(map_->zone_seq());
                         last_seq = map_->zone_seq();
