@@ -437,6 +437,14 @@ int main() {
         auto pose_rpc = std::async(std::launch::async, [&idle_pose]() {
             return idle_pose.PoseStream();
         });
+        // No odometry has arrived yet: the stream must not invent (0,0,0).
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        require(mock.pose_snapshots.load() == 0,
+                "PoseStream emitted a fabricated pose before odometry");
+        {
+            std::lock_guard<std::mutex> lock(*idle_pose.getMapMutex());
+            map->mutable_robotpose()->set_position_x(1.25);
+        }
         for (int i = 0; i < 300 && mock.pose_snapshots.load() == 0; ++i) {
             std::this_thread::sleep_for(std::chrono::milliseconds(5));
         }
