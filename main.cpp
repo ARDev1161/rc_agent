@@ -1,3 +1,4 @@
+#include "network/tls_credentials.h"
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp/parameter_client.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -856,9 +857,28 @@ int main(int argc, char **argv)
   int bcastPort = paramNode->declare_parameter<int>("network.bcast_port", 11111);
   int arpingPort = paramNode->declare_parameter<int>("network.arping_port", 11112);
 
-  // Create a NetworkController node and start the arping service
-  std::shared_ptr<NetworkController> network = std::make_shared<NetworkController>(controlsPtr, sensorsPtr, mapPtr);
-  network->startArpingService(bcastPort, arpingPort);
+  // Configured TLS is never downgraded to plaintext on failure.
+  std::shared_ptr<grpc::ChannelCredentials> credentials;
+  std::string configured_operator;
+  try {
+    const auto tls = rc::transport::loadTlsMaterial(endpoint_config);
+    if (tls) {
+      credentials = rc::transport::makeTlsChannelCredentials(*tls);
+      if (endpoint_config.searchString("Amur.Network.address", configured_operator) != EXIT_SUCCESS ||
+          configured_operator.empty())
+        throw std::runtime_error("TLS requires explicit Amur.Network.address (certificate hostname or IP:port)");
+    } else {
+      credentials = grpc::InsecureChannelCredentials();
+    }
+    if (!credentials) throw std::runtime_error("Cannot create configured gRPC credentials");
+  } catch (const std::exception &error) {
+    RCLCPP_ERROR(paramNode->get_logger(), "Network configuration rejected: %s", error.what());
+    rclcpp::shutdown();
+    return EXIT_FAILURE;
+  }
+  auto network = std::make_shared<NetworkController>(controlsPtr, sensorsPtr, mapPtr, credentials);
+  if (configured_operator.empty())
+    network->startArpingService(bcastPort, arpingPort);
 
   // Create an AddressSender node that publishes the last connected IP address
   auto addressSenderNode = std::make_shared<AddressSender>(network);
@@ -872,9 +892,10 @@ int main(int argc, char **argv)
     if (!rclcpp::ok())
       return 0;
 
-    if(network->runClient() == 0){
-      std::cout << "Connected to server" << std::endl;
-      network->stopArpingService();
+    const int result = configured_operator.empty() ? network->runClient() : network->runClient(configured_operator);
+    if(result == 0){
+      std::cout << "Connection workers started" << std::endl;
+      if (configured_operator.empty()) network->stopArpingService();
       break;
     }
     std::this_thread::sleep_for(std::chrono::milliseconds(10)); // Wait 10 milliseconds

@@ -30,7 +30,9 @@ Amur:
 
     Network:
     {
-//        address = "127.0.0.1:7777";
+        // TLS requires an explicit operator address matching the server certificate SAN.
+        // address = "operator.example:7777";
+        // tls: { ca_file = "/path/ca.pem"; certificate_file = "/path/robot.pem"; private_key_file = "/path/robot.key"; };
     };
 
 

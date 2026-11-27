@@ -75,6 +75,7 @@ private:
     grpcServer service;
     /// Shared pointer to gRPC client instance.
     std::shared_ptr<grpcClient> clientPtr;
+    std::shared_ptr<grpc::ChannelCredentials> channel_credentials_;
 
     /// List of pointers to control machines.
     std::vector<ControlMachine*> controlMachineAddresses;
@@ -103,7 +104,8 @@ public:
      */
     NetworkController(std::shared_ptr<Controls> controlsPtr,
                       std::shared_ptr<Sensors> sensorsPtr,
-                      std::shared_ptr<map_service::GetMapResponse> mapPtr);
+                      std::shared_ptr<map_service::GetMapResponse> mapPtr,
+                      std::shared_ptr<grpc::ChannelCredentials> credentials = grpc::InsecureChannelCredentials());
 
     /**
      * @brief Starts the ARP ping service.
