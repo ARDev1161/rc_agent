@@ -4,7 +4,10 @@
 #include <memory>
 #include <string>
 #include <mutex>
+#include <atomic>
+#include <cstdint>
 #include <chrono>
+#include <functional>
 #include <rclcpp/rclcpp.hpp>
 #include <rclcpp_action/rclcpp_action.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -39,11 +42,13 @@ public:
      * @param nav_cmd_req Shared pointer to the NavCommandRequest protobuf message.
      * @param nav_cmd_resp Shared pointer to the NavCommandResponse protobuf message.
      * @param grpc_mutex Reference to a mutex used for thread-safe gRPC operations.
+     * @param options ROS2 parameter overrides for trusted Nav2 endpoint names.
      */
     explicit RobotNavigator(const std::string &node_name,
                             std::shared_ptr<NavCommandRequest> nav_cmd_req,
                             std::shared_ptr<NavCommandResponse> nav_cmd_resp,
-                            std::mutex &grpc_mutex);
+                            std::mutex &grpc_mutex,
+                            const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
 
     /**
      * @brief Destructor for RobotNavigator.
@@ -174,12 +179,17 @@ private:
 
     // Template callback methods for handling action server responses
     template <typename T>
-    void goalResponseCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr goal_handle);
+    void goalResponseCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr goal_handle, std::uint64_t generation);
     template <typename T>
-    void feedbackCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr, const std::shared_ptr<const typename T::Feedback> feedback);
+    void feedbackCallback(typename rclcpp_action::ClientGoalHandle<T>::SharedPtr, const std::shared_ptr<const typename T::Feedback> feedback, std::uint64_t generation);
     template <typename T>
-    void resultCallback(const typename rclcpp_action::ClientGoalHandle<T>::WrappedResult &result);
+    void resultCallback(const typename rclcpp_action::ClientGoalHandle<T>::WrappedResult &result, std::uint64_t generation);
 
+    std::atomic<std::uint64_t> goal_generation_{0}; ///< Ignore late callbacks from superseded goals
+    std::mutex active_goal_mutex_;                          ///< Protect current goal cancellation
+    std::uint64_t active_goal_generation_{0};
+    bool cancel_requested_{false};                          ///< Cancellation before goal acceptance
+    std::function<void()> cancel_active_goal_;              ///< Cancel only the accepted current goal
     bool task_completed_;                                   ///< Flag indicating if the current task is completed
     rclcpp_action::ResultCode result_code_;                 ///< Result code of the last navigation task
     rclcpp::Time last_feedback_time_;                       ///< Timestamp of the last feedback update

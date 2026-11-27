@@ -30,9 +30,53 @@ Amur:
 
     Network:
     {
-//        address = "127.0.0.1:7777";
+        // TLS requires an explicit operator address matching the server certificate SAN.
+        // address = "operator.example:7777";
+        // tls: { ca_file = "/path/ca.pem"; certificate_file = "/path/robot.pem"; private_key_file = "/path/robot.key"; };
     };
 
+
+    // rc-api-v2 capability advertisement. Set a UNIQUE stable ID to opt in.
+    // A non-empty stable ID is required. Remove manual.velocity for robots without a base.
+    API:
+    {
+        robot_id = "";
+        display_name = "Robot";
+        capabilities = ("manual.velocity", "navigation.nav2", "map.2d", "video");
+        velocity_axes = ("linear.x", "angular.z");
+        // Signed SI bounds are required for every supported axis.
+        // Illustrative values only: adjust to the actual controller before enabling motion.
+        base_limits:
+        {
+            linear_x = { min = -0.2; max = 0.2; };
+            angular_z = { min = -0.5; max = 0.5; };
+            // For an omni base add "linear.y" to velocity_axes and linear_y bounds.
+        };
+        // Optional ROS2 sensor_msgs/msg/BatteryState topic. Leave unset for
+        // robots without battery telemetry; no zero-valued battery is sent.
+        // battery_topic = "/battery_state";
+        // P2: trusted local ROS2 endpoint mappings (libconfig, not ROS params).
+        // Leave endpoints unset to preserve legacy defaults.
+        // endpoints:
+        // {
+        //     odom_topic = "/odom";
+        //     cmd_vel_topic = "/cmd_vel";
+        //     cmd_vel_smoothed_topic = "/cmd_vel_smoothed";
+        //     cmd_vel_nav_topic = "/cmd_vel_nav";
+        //     cmd_vel_type = "twist"; // or "twist_stamped"
+        //     cmd_vel_frame = "base_link";
+        //     map_topic = "/map";
+        //     zones_topic = "/mapannotator/rc_agent_zones";
+        //     tf_map_frame = "map";
+        //     tf_robot_frame = "base_link";
+        //     navigate_to_pose_action = "navigate_to_pose";
+        //     navigate_through_poses_action = "navigate_through_poses";
+        //     follow_waypoints_action = "follow_waypoints";
+        //     spin_action = "spin";
+        //     initial_pose_topic = "initialpose";
+        // };
+
+    };
 
     Peripheral:
     {

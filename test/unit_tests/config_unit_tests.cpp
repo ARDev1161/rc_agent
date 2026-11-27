@@ -1,4 +1,6 @@
 #include "../../config/configprocessor.h"
+#include "../../config/endpoint_bindings.h"
+#include <stdexcept>
 #include <filesystem>
 #include <fstream>
 #include <gtest/gtest.h>
@@ -448,3 +450,376 @@ TEST(getConfigName, setAndGet) {
 
 //    return RUN_ALL_TESTS();
 //}
+
+// rc-api-v2: validate libconfig string lists and fail without partial output.
+TEST(ConfigStringList, ReadsCapabilities) {
+  const auto path = fs::temp_directory_path() / "rc_agent_v2_capabilities_test.cfg";
+  {
+    std::ofstream out(path);
+    out << "api: { capabilities = (\"manual.velocity\", \"navigation.nav2\"); };" << std::endl;
+  }
+  ConfigProcessor config(path.string());
+  std::vector<std::string> result;
+  EXPECT_EQ(EXIT_SUCCESS, config.searchStringList("api.capabilities", result));
+  EXPECT_EQ((std::vector<std::string>{"manual.velocity", "navigation.nav2"}), result);
+  fs::remove(path);
+}
+
+TEST(ConfigStringList, RejectsNonStringWithoutPartialOutput) {
+  const auto path = fs::temp_directory_path() / "rc_agent_v2_invalid_list_test.cfg";
+  {
+    std::ofstream out(path);
+    out << "api: { capabilities = (\"manual.velocity\", 42); scalar = \"x\"; };" << std::endl;
+  }
+  ConfigProcessor config(path.string());
+  std::vector<std::string> result{"keep"};
+  EXPECT_EQ(EXIT_FAILURE, config.searchStringList("api.capabilities", result));
+  EXPECT_EQ((std::vector<std::string>{"keep"}), result);
+  EXPECT_EQ(EXIT_FAILURE, config.searchStringList("api.scalar", result));
+  EXPECT_EQ(EXIT_FAILURE, config.searchStringList("api.missing", result));
+  fs::remove(path);
+}
+
+
+TEST(ConfigMalformedScalars, RejectWrongTypeWithoutAbortingAgent) {
+  const auto path = fs::temp_directory_path() / "rc_agent_v2_wrong_scalar_types.cfg";
+  {
+    std::ofstream out(path);
+    out << "Amur: { API: { robot_id = 123; display_name = true; }; };"
+           " wrong: { text = \"not-a-number\"; };" << std::endl;
+  }
+  ConfigProcessor config(path.string());
+  std::string name = "unchanged";
+  int number = 42;
+  float value = 1.25F;
+  bool enabled = true;
+  EXPECT_EQ(EXIT_FAILURE, config.searchString("Amur.API.robot_id", name));
+  EXPECT_EQ("unchanged", name);
+  EXPECT_EQ(EXIT_FAILURE, config.searchString("Amur.API.display_name", name));
+  EXPECT_EQ("unchanged", name);
+  EXPECT_EQ(EXIT_FAILURE, config.searchInt("wrong.text", number));
+  EXPECT_EQ(42, number);
+  EXPECT_EQ(EXIT_FAILURE, config.searchFloat("wrong.text", value));
+  EXPECT_FLOAT_EQ(1.25F, value);
+  EXPECT_EQ(EXIT_FAILURE, config.searchBool("wrong.text", enabled));
+  EXPECT_TRUE(enabled);
+  fs::remove(path);
+}
+
+
+// P2: distinct robot profiles retain their configured endpoint strings;
+// malformed endpoint types must not overwrite a previously valid value.
+TEST(ConfigEndpointProfiles, IndependentBindingsAndMalformedType) {
+  const auto path_a = fs::temp_directory_path() / "rc_agent_v2_profile_a_endpoints.cfg";
+  const auto path_b = fs::temp_directory_path() / "rc_agent_v2_profile_b_endpoints.cfg";
+  {
+    std::ofstream out(path_a);
+    out << "Amur: { API: { endpoints: { odom_topic = \"/alpha/odom\";"
+           " cmd_vel_topic = \"/alpha/cmd_vel\";"
+           " navigate_to_pose_action = \"/alpha/navigate_to_pose\"; }; }; };\n";
+  }
+  {
+    std::ofstream out(path_b);
+    out << "Amur: { API: { endpoints: { odom_topic = \"/beta/odom\";"
+           " cmd_vel_topic = 17;"
+           " navigate_to_pose_action = \"/beta/navigate_to_pose\"; }; }; };\n";
+  }
+  ConfigProcessor a(path_a.string());
+  ConfigProcessor b(path_b.string());
+  std::string value;
+  EXPECT_EQ(EXIT_SUCCESS, a.searchString("Amur.API.endpoints.odom_topic", value));
+  EXPECT_EQ("/alpha/odom", value);
+  EXPECT_EQ(EXIT_SUCCESS, a.searchString("Amur.API.endpoints.cmd_vel_topic", value));
+  EXPECT_EQ("/alpha/cmd_vel", value);
+  EXPECT_EQ(EXIT_SUCCESS, a.searchString("Amur.API.endpoints.navigate_to_pose_action", value));
+  EXPECT_EQ("/alpha/navigate_to_pose", value);
+  EXPECT_EQ(EXIT_SUCCESS, b.searchString("Amur.API.endpoints.odom_topic", value));
+  EXPECT_EQ("/beta/odom", value);
+  EXPECT_EQ(EXIT_FAILURE, b.searchString("Amur.API.endpoints.cmd_vel_topic", value));
+  EXPECT_EQ("/beta/odom", value);
+  EXPECT_EQ(EXIT_SUCCESS, b.searchString("Amur.API.endpoints.navigate_to_pose_action", value));
+  EXPECT_EQ("/beta/navigate_to_pose", value);
+  fs::remove(path_a);
+  fs::remove(path_b);
+}
+
+// P2: exercise the exact production libconfig->ROS2 endpoint profile loader.
+// Distinct robot files must not silently share global auxiliary velocity topics.
+TEST(ConfigEndpointProfiles, AuxiliaryVelocityBindingsAreIndependent) {
+  const auto path_a = fs::temp_directory_path() / "rc_agent_p2_aux_alpha.cfg";
+  const auto path_b = fs::temp_directory_path() / "rc_agent_p2_aux_beta.cfg";
+  {
+    std::ofstream out(path_a);
+    out << "Amur: { API: { endpoints: { "
+           "odom_topic = \"/alpha/odom\"; cmd_vel_topic = \"/alpha/cmd_vel\"; "
+           "cmd_vel_smoothed_topic = \"/alpha/filtered\"; "
+           "cmd_vel_nav_topic = \"/alpha/nav\"; }; }; };\n";
+  }
+  {
+    std::ofstream out(path_b);
+    out << "Amur: { API: { endpoints: { "
+           "odom_topic = \"/beta/odom\"; cmd_vel_topic = \"/beta/cmd_vel\"; "
+           "cmd_vel_smoothed_topic = \"/beta/filtered\"; "
+           "cmd_vel_nav_topic = \"/beta/nav\"; "
+           "cmd_vel_type = \"twist_stamped\"; }; }; };\n";
+  }
+  ConfigProcessor a(path_a.string());
+  ConfigProcessor b(path_b.string());
+  const auto alpha = loadBaseControlEndpointProfile(a);
+  const auto beta = loadBaseControlEndpointProfile(b);
+  EXPECT_EQ(alpha.odom_topic, "/alpha/odom");
+  EXPECT_EQ(beta.odom_topic, "/beta/odom");
+  EXPECT_EQ(alpha.cmd_vel_topic, "/alpha/cmd_vel");
+  EXPECT_EQ(beta.cmd_vel_topic, "/beta/cmd_vel");
+  EXPECT_EQ(alpha.cmd_vel_smoothed_topic, "/alpha/filtered");
+  EXPECT_EQ(beta.cmd_vel_smoothed_topic, "/beta/filtered");
+  EXPECT_EQ(alpha.cmd_vel_nav_topic, "/alpha/nav");
+  EXPECT_EQ(beta.cmd_vel_nav_topic, "/beta/nav");
+  EXPECT_EQ(alpha.cmd_vel_type, "twist");
+  EXPECT_EQ(beta.cmd_vel_type, "twist_stamped");
+  EXPECT_EQ(alpha.cmd_vel_frame, "base_link");
+  EXPECT_EQ(beta.cmd_vel_frame, "base_link");
+  fs::remove(path_a);
+  fs::remove(path_b);
+}
+
+TEST(ConfigEndpointProfiles, MissingAuxiliaryBindingsRetainLegacyDefaults) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_aux_defaults.cfg";
+  {
+    std::ofstream out(path);
+    out << "Amur: { API: { endpoints: { cmd_vel_topic = \"/custom/cmd_vel\"; }; }; };\n";
+  }
+  ConfigProcessor config(path.string());
+  const auto profile = loadBaseControlEndpointProfile(config);
+  EXPECT_EQ(profile.cmd_vel_topic, "/custom/cmd_vel");
+  EXPECT_EQ(profile.cmd_vel_smoothed_topic, "/cmd_vel_smoothed");
+  EXPECT_EQ(profile.cmd_vel_nav_topic, "/cmd_vel_nav");
+  fs::remove(path);
+}
+
+TEST(ConfigEndpointProfiles, InvalidAuxiliaryBindingsFailClosed) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_aux_invalid.cfg";
+  for (const auto &key : {"cmd_vel_smoothed_topic", "cmd_vel_nav_topic"}) {
+    for (const auto &bad_value : {"17", "\"\""}) {
+      {
+        std::ofstream out(path);
+        out << "Amur: { API: { endpoints: { " << key
+            << " = " << bad_value << "; }; }; };\n";
+      }
+      ConfigProcessor config(path.string());
+      EXPECT_THROW(loadBaseControlEndpointProfile(config), std::invalid_argument)
+          << "key=" << key << " value=" << bad_value;
+    }
+  }
+  fs::remove(path);
+}
+
+
+// P2 production path: the same libconfig Nav2 resolver is used by main.cpp,
+// not test-only hard-coded NodeOptions. Two robot profiles configure every
+// supported action and localization endpoint without recompilation.
+TEST(ConfigEndpointProfiles, Nav2ActionsLoadIndependently) {
+  const auto path_a = fs::temp_directory_path() / "rc_agent_p2_nav_alpha.cfg";
+  const auto path_b = fs::temp_directory_path() / "rc_agent_p2_nav_beta.cfg";
+  {
+    std::ofstream out(path_a);
+    out << R"(Amur: { API: { endpoints: {
+      navigate_to_pose_action = "/alpha/navigate_to_pose";
+      navigate_through_poses_action = "/alpha/navigate_through_poses";
+      follow_waypoints_action = "/alpha/follow_waypoints";
+      spin_action = "/alpha/spin";
+      initial_pose_topic = "/alpha/initialpose";
+    }; }; };)";
+  }
+  {
+    std::ofstream out(path_b);
+    out << R"(Amur: { API: { endpoints: {
+      navigate_to_pose_action = "/beta/navigate_to_pose";
+      navigate_through_poses_action = "/beta/navigate_through_poses";
+      follow_waypoints_action = "/beta/follow_waypoints";
+      spin_action = "/beta/spin";
+      initial_pose_topic = "/beta/initialpose";
+    }; }; };)";
+  }
+  ConfigProcessor a(path_a.string());
+  ConfigProcessor b(path_b.string());
+  const auto alpha = loadNav2EndpointProfile(a);
+  const auto beta = loadNav2EndpointProfile(b);
+  EXPECT_EQ(alpha.navigate_to_pose_action, "/alpha/navigate_to_pose");
+  EXPECT_EQ(alpha.navigate_through_poses_action, "/alpha/navigate_through_poses");
+  EXPECT_EQ(alpha.follow_waypoints_action, "/alpha/follow_waypoints");
+  EXPECT_EQ(alpha.spin_action, "/alpha/spin");
+  EXPECT_EQ(alpha.initial_pose_topic, "/alpha/initialpose");
+  EXPECT_EQ(beta.navigate_to_pose_action, "/beta/navigate_to_pose");
+  EXPECT_EQ(beta.navigate_through_poses_action, "/beta/navigate_through_poses");
+  EXPECT_EQ(beta.follow_waypoints_action, "/beta/follow_waypoints");
+  EXPECT_EQ(beta.spin_action, "/beta/spin");
+  EXPECT_EQ(beta.initial_pose_topic, "/beta/initialpose");
+  fs::remove(path_a);
+  fs::remove(path_b);
+}
+
+TEST(ConfigEndpointProfiles, Nav2MissingKeysRetainLegacyDefaults) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_nav_defaults.cfg";
+  {
+    std::ofstream out(path);
+    out << R"(Amur: { API: { endpoints: {
+      navigate_to_pose_action = "/custom/navigate_to_pose";
+    }; }; };)";
+  }
+  ConfigProcessor config(path.string());
+  const auto profile = loadNav2EndpointProfile(config);
+  EXPECT_EQ(profile.navigate_to_pose_action, "/custom/navigate_to_pose");
+  EXPECT_EQ(profile.navigate_through_poses_action, "navigate_through_poses");
+  EXPECT_EQ(profile.follow_waypoints_action, "follow_waypoints");
+  EXPECT_EQ(profile.spin_action, "spin");
+  EXPECT_EQ(profile.initial_pose_topic, "initialpose");
+  fs::remove(path);
+}
+
+TEST(ConfigEndpointProfiles, Nav2MalformedEndpointValuesFailClosed) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_nav_invalid.cfg";
+  for (const auto &key : {"navigate_to_pose_action",
+                          "navigate_through_poses_action",
+                          "follow_waypoints_action", "spin_action",
+                          "initial_pose_topic"}) {
+    for (const auto &invalid : {"42", "\"\""}) {
+      {
+        std::ofstream out(path);
+        out << "Amur: { API: { endpoints: { " << key
+            << " = " << invalid << "; }; }; };";
+      }
+      ConfigProcessor config(path.string());
+      EXPECT_THROW(loadNav2EndpointProfile(config), std::invalid_argument)
+          << "key=" << key << " value=" << invalid;
+    }
+  }
+  fs::remove(path);
+}
+
+
+// P2: verify the same production libconfig->MapNode profile for two distinct
+// ROS graph configurations, including TF frame pairs and zones.
+TEST(ConfigEndpointProfiles, MapAndTfBindingsLoadIndependently) {
+  const auto path_a = fs::temp_directory_path() / "rc_agent_p2_map_alpha.cfg";
+  const auto path_b = fs::temp_directory_path() / "rc_agent_p2_map_beta.cfg";
+  {
+    std::ofstream out(path_a);
+    out << R"(Amur: { API: { endpoints: {
+      map_topic = "/alpha/map"; zones_topic = "/alpha/zones";
+      tf_map_frame = "alpha/map"; tf_robot_frame = "alpha/base_link";
+    }; }; };)";
+  }
+  {
+    std::ofstream out(path_b);
+    out << R"(Amur: { API: { endpoints: {
+      map_topic = "/beta/map"; zones_topic = "/beta/zones";
+      tf_map_frame = "beta/map"; tf_robot_frame = "beta/base_link";
+    }; }; };)";
+  }
+  ConfigProcessor a(path_a.string());
+  ConfigProcessor b(path_b.string());
+  const auto alpha = loadMapEndpointProfile(a);
+  const auto beta = loadMapEndpointProfile(b);
+  EXPECT_EQ(alpha.map_topic, "/alpha/map");
+  EXPECT_EQ(alpha.zones_topic, "/alpha/zones");
+  EXPECT_EQ(alpha.tf_map_frame, "alpha/map");
+  EXPECT_EQ(alpha.tf_robot_frame, "alpha/base_link");
+  EXPECT_EQ(beta.map_topic, "/beta/map");
+  EXPECT_EQ(beta.zones_topic, "/beta/zones");
+  EXPECT_EQ(beta.tf_map_frame, "beta/map");
+  EXPECT_EQ(beta.tf_robot_frame, "beta/base_link");
+  fs::remove(path_a);
+  fs::remove(path_b);
+}
+
+TEST(ConfigEndpointProfiles, MapMissingKeysRetainLegacyDefaults) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_map_defaults.cfg";
+  {
+    std::ofstream out(path);
+    out << R"(Amur: { API: { endpoints: { map_topic = "/custom/map"; }; }; };)";
+  }
+  ConfigProcessor config(path.string());
+  const auto profile = loadMapEndpointProfile(config);
+  EXPECT_EQ(profile.map_topic, "/custom/map");
+  EXPECT_EQ(profile.zones_topic, "/mapannotator/rc_agent_zones");
+  EXPECT_EQ(profile.tf_map_frame, "map");
+  EXPECT_EQ(profile.tf_robot_frame, "base_link");
+  fs::remove(path);
+}
+
+TEST(ConfigEndpointProfiles, MapMalformedEndpointValuesFailClosed) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_map_invalid.cfg";
+  for (const auto &key : {"map_topic", "zones_topic",
+                          "tf_map_frame", "tf_robot_frame"}) {
+    for (const auto &invalid : {"true", "\"\""}) {
+      {
+        std::ofstream out(path);
+        out << "Amur: { API: { endpoints: { " << key
+            << " = " << invalid << "; }; }; };";
+      }
+      ConfigProcessor config(path.string());
+      EXPECT_THROW(loadMapEndpointProfile(config), std::invalid_argument)
+          << "key=" << key << " value=" << invalid;
+    }
+  }
+  fs::remove(path);
+}
+
+// P2: whitespace-only local endpoint names must fail closed rather than
+// creating ROS2 publishers/actions with unusable names.
+TEST(ConfigEndpointProfiles, WhitespaceOnlyBindingsFailClosed) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_whitespace_endpoints.cfg";
+  for (const auto &key : {"cmd_vel_topic", "cmd_vel_smoothed_topic",
+                          "navigate_to_pose_action", "map_topic", "tf_map_frame"}) {
+    for (const auto &value : {" ", "  \\t  "}) {
+      {
+        std::ofstream out(path);
+        out << "Amur: { API: { endpoints: { " << key << " = \"" << value
+            << "\"; }; }; };";
+      }
+      ConfigProcessor config(path.string());
+      EXPECT_THROW(endpointOrDefault(config, std::string("Amur.API.endpoints.") + key,
+                                     "fallback"), std::invalid_argument) << key;
+    }
+  }
+  fs::remove(path);
+}
+
+// P2: nonempty names with embedded or surrounding whitespace are invalid
+// ROS graph names too; rejecting only whitespace-only strings is insufficient.
+TEST(ConfigEndpointProfiles, EmbeddedOrPaddedWhitespaceFailsClosed) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_padded_endpoints.cfg";
+  for (const auto &key : {"cmd_vel_topic", "cmd_vel_smoothed_topic",
+                          "navigate_to_pose_action", "map_topic", "tf_map_frame"}) {
+    for (const auto &value : {"/robot a/topic", " /robot/topic", "/robot/topic "}) {
+      {
+        std::ofstream out(path);
+        out << "Amur: { API: { endpoints: { " << key << " = \""
+            << value << "\"; }; }; };";
+      }
+      ConfigProcessor config(path.string());
+      EXPECT_THROW(endpointOrDefault(config, std::string("Amur.API.endpoints.") + key,
+                                     "fallback"), std::invalid_argument)
+          << key << " value=" << value;
+    }
+  }
+  fs::remove(path);
+}
+
+
+// P2: a nonempty ROS endpoint containing an escaped control character must
+// be rejected before ROS2 node construction. This also checks libconfig's
+// decoding boundary rather than testing a pre-sanitized C++ literal.
+TEST(ConfigEndpointProfiles, EscapedControlCharacterFailsClosed) {
+  const auto path = fs::temp_directory_path() / "rc_agent_p2_control_char_endpoint.cfg";
+  {
+    std::ofstream out(path);
+    out << R"(Amur: { API: { endpoints: {
+      navigate_to_pose_action = "/robot\t/navigate_to_pose";
+    }; }; };)";
+  }
+  ConfigProcessor config(path.string());
+  EXPECT_THROW(loadNav2EndpointProfile(config), std::invalid_argument);
+  fs::remove(path);
+}

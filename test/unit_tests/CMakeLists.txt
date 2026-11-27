@@ -24,4 +24,4 @@ target_link_libraries(rc_agent_unit_tests
     GTest::Main
 )
 
-add_test(test_all amurcontroller_unit_tests)
+add_test(NAME test_all COMMAND rc_agent_unit_tests)

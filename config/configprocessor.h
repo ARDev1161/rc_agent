@@ -33,6 +33,8 @@ public:
   int searchInt(std::string settingName, int &out);
   int searchFloat(std::string settingName, float &out);
   int searchBool(std::string settingName, bool &out);
+  /// @brief Read a libconfig list/array of strings without partial output on error.
+  int searchStringList(const std::string &settingName, std::vector<std::string> &out);
 
   int rewriteString(std::string settingName, const std::string &value);
   int rewriteInt(std::string settingName, int value);

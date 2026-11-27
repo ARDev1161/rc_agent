@@ -11,6 +11,8 @@ include_directories("${CMAKE_CURRENT_BINARY_DIR}")
 find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -50,6 +52,11 @@ set(CONFIG_PROCESSOR
     config/configprocessor.cpp
    )
 
+set(VIDEO_SOURCES
+    modules/video/stream_pipeline_receiver.h
+    modules/video/stream_pipeline_receiver.cpp
+)
+
 set(BATTERY_SOURCES
     modules/battery/battery_state_adapter.h
     modules/battery/battery_state_handler.h
@@ -78,6 +85,7 @@ set(MAP_SOURCES
 )
 
 set(MODULES
+    ${VIDEO_SOURCES}
     ${BATTERY_SOURCES}
     ${MAP_SOURCES}
     ${NAVIGATOR_SOURCES}
@@ -90,9 +98,77 @@ add_executable(${PROJECT_NAME}
   ${MODULES}
 )
 
+if(BUILD_TESTING)
+  ament_add_gtest(nav2_endpoint_binding_test
+    test/unit_tests/nav2_endpoint_binding_test.cpp
+    modules/nav2/robot_navigator.cpp
+    modules/nav2/robot_navigator_handler.cpp
+    modules/nav2/nav_command.cpp
+  )
+  if(TARGET nav2_endpoint_binding_test)
+    target_include_directories(nav2_endpoint_binding_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    ament_target_dependencies(nav2_endpoint_binding_test
+      rclcpp rclcpp_action geometry_msgs nav2_msgs lifecycle_msgs action_msgs)
+    target_link_libraries(nav2_endpoint_binding_test RobotProtos)
+  endif()
+
+  ament_add_gtest(map_endpoint_binding_test
+    test/unit_tests/map_endpoint_binding_test.cpp
+    modules/map/map_node.cpp
+  )
+  if(TARGET map_endpoint_binding_test)
+    target_include_directories(map_endpoint_binding_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    ament_target_dependencies(map_endpoint_binding_test rclcpp nav_msgs std_msgs tf2 tf2_ros geometry_msgs)
+    target_link_libraries(map_endpoint_binding_test RobotProtos)
+  endif()
+
+  ament_add_gtest(velocity_watchdog_dds_test
+    test/unit_tests/velocity_watchdog_dds_test.cpp
+    modules/basecontrol/basecontrol.cpp
+  )
+  if(TARGET velocity_watchdog_dds_test)
+    target_include_directories(velocity_watchdog_dds_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    ament_target_dependencies(velocity_watchdog_dds_test rclcpp geometry_msgs nav_msgs)
+    target_link_libraries(velocity_watchdog_dds_test RobotProtos)
+  endif()
+
+  ament_add_gtest(endpoint_binding_test
+    test/unit_tests/endpoint_binding_test.cpp
+    modules/basecontrol/basecontrol.cpp
+  )
+  if(TARGET endpoint_binding_test)
+    target_include_directories(endpoint_binding_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    ament_target_dependencies(endpoint_binding_test rclcpp geometry_msgs nav_msgs)
+    target_link_libraries(endpoint_binding_test RobotProtos)
+  endif()
+
+  ament_add_gtest(battery_freshness_test
+    test/unit_tests/battery_freshness_test.cpp
+    modules/battery/battery_state_node.cpp
+    modules/battery/battery_state_handler.cpp
+  )
+  if(TARGET battery_freshness_test)
+    target_include_directories(battery_freshness_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    ament_target_dependencies(battery_freshness_test rclcpp sensor_msgs)
+    target_link_libraries(battery_freshness_test RobotProtos)
+  endif()
+
+  ament_add_gtest(video_pipeline_snapshot_test
+    test/unit_tests/video_pipeline_snapshot_test.cpp
+    modules/video/stream_pipeline_receiver.cpp
+  )
+  if(TARGET video_pipeline_snapshot_test)
+    target_include_directories(video_pipeline_snapshot_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    ament_target_dependencies(video_pipeline_snapshot_test rclcpp std_msgs)
+    target_link_libraries(video_pipeline_snapshot_test RobotProtos)
+  endif()
+endif()
+
 ament_target_dependencies(${PROJECT_NAME}
   rclcpp
   sensor_msgs
+  nav_msgs
+  std_msgs
   rclcpp_action
   geometry_msgs
   tf2

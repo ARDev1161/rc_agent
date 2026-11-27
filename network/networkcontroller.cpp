@@ -3,10 +3,12 @@
 
 NetworkController::NetworkController(std::shared_ptr<Controls> controlsPtr,
                                      std::shared_ptr<Sensors> sensorsPtr,
-                                     std::shared_ptr<map_service::GetMapResponse> mapPtr) :
+                                     std::shared_ptr<map_service::GetMapResponse> mapPtr,
+                                     std::shared_ptr<grpc::ChannelCredentials> credentials) :
     controls_(controlsPtr),
     sensors_(sensorsPtr),
     map_(mapPtr),
+    channel_credentials_(std::move(credentials)),
     reconnect_strategy_(std::make_unique<ConstantReconnectStrategy>(std::chrono::milliseconds(1000)))
 {
 }
@@ -79,14 +81,16 @@ int NetworkController::runClient(std::string &server_address, bool tryConnectIfF
     if (client_started_) {
         return connected ? 0 : -1;
     }
+    if (!channel_credentials_) return -1;
     client_started_ = true;
 
     setConnectionState(ConnectionState::Connecting);
     clientPtr = std::make_shared<grpcClient>(
-        grpc::CreateChannel(server_address, grpc::InsecureChannelCredentials()),
+        grpc::CreateChannel(server_address, channel_credentials_),
         controls_,
         sensors_,
-        map_
+        map_,
+        tryConnectIfFailed
     );
 
     size_t pos = server_address.find(':');
@@ -167,8 +171,7 @@ int NetworkController::runClient(bool tryConnectToUnverified)
 
         std::cout << "Connecting to - " << curAddr << std::endl;
         setConnectionState(ConnectionState::Connecting);
-        runClient(curAddr, true);
-        return 0;
+        return runClient(curAddr, true);
     }
 
     return connected ? 0 : -1;
@@ -176,7 +179,7 @@ int NetworkController::runClient(bool tryConnectToUnverified)
 
 int NetworkController::runServer(std::string &address_mask)
 {
-    std::thread thr([&]()
+    std::thread thr([this, address_mask]()
      {
       grpc::EnableDefaultHealthCheckService(true);
       grpc::reflection::InitProtoReflectionServerBuilderPlugin();
@@ -193,6 +196,11 @@ int NetworkController::runServer(std::string &address_mask)
 
       // Finally assemble the server.
       std::unique_ptr<grpc::Server> server(builder.BuildAndStart());
+      if (!server) {
+          // A failed bind must not dereference a null server in the detached worker.
+          std::cerr << "Failed to start gRPC server on " << address_mask << std::endl;
+          return;
+      }
       std::cout << "Server listening on " << address_mask << std::endl;
 
       // Wait for the server to shutdown. Note that some other thread must be

@@ -1,40 +1,91 @@
+#include <cmath>
 #include "client.h"
 #include <cstdint>
+#include <algorithm>
+#include <random>
+#include <sstream>
 #include <grpcpp/grpcpp.h>
 
 namespace {
 
-template<typename StreamT, typename FactoryFn, typename PumpFn>
+std::string newVelocityIdentity()
+{
+    std::random_device random;
+    std::ostringstream out;
+    for (int i = 0; i < 8; ++i) out << std::hex << random() << '-';
+    return out.str();
+}
+
+bool authenticatedVelocityPeer(grpc::ClientContext &context)
+{
+    const auto auth = context.auth_context();
+    if (!auth || !auth->IsPeerAuthenticated()) return false;
+    const auto transport = auth->FindPropertyValues("transport_security_type");
+    return transport.size() == 1 && transport.front() == "ssl";
+}
+
+template<typename UnregisterFn>
+struct ActiveContextGuard {
+    grpc::ClientContext &context;
+    UnregisterFn &unregisterContext;
+    ~ActiveContextGuard() { unregisterContext(context); }
+};
+
+template<typename StreamT, typename FactoryFn, typename PumpFn,
+         typename RegisterFn, typename UnregisterFn>
 grpc::Status runStreamWithRetry(const std::string &stream_name,
-                                bool &stopped_flag,
+                                std::atomic<bool> &stopped_flag,
                                 int retry_delay_ms,
+                                bool retry_enabled,
+                                RegisterFn &&register_context,
+                                UnregisterFn &&unregister_context,
                                 FactoryFn &&stream_factory,
                                 PumpFn &&pump_loop)
 {
-    grpc::Status status;
-    bool retry = true;
-    stopped_flag = false;
+    grpc::Status status(grpc::StatusCode::CANCELLED, "Stream was stopped");
 
-    while (retry) {
+    while (!stopped_flag.load()) {
         grpc::ClientContext context;
+        if (!register_context(context)) {
+            return grpc::Status(grpc::StatusCode::CANCELLED, "Stream was stopped");
+        }
+        ActiveContextGuard<UnregisterFn> context_guard{context, unregister_context};
         auto stream = stream_factory(context);
         if (!stream) {
-            return grpc::Status(grpc::StatusCode::FAILED_PRECONDITION, "Stream factory returned null");
-        }
-
-        pump_loop(*stream);
-
-        stream->WritesDone();
-        status = stream->Finish();
-        if (status.ok()) {
-            retry = false;
+            // Stream creation can fail transiently during reconnect. Keep the
+            // configured retry policy instead of terminating this worker.
+            status = grpc::Status(grpc::StatusCode::UNAVAILABLE, "Stream factory returned null");
         } else {
+            pump_loop(*stream, context);
+            stream->WritesDone();
+            status = stream->Finish();
+        }
+        // An OK Finish after peer EOF is still a closed live stream.
+        // Reconnect when requested, but preserve one-shot and explicit stop.
+        if (status.ok() && (!retry_enabled || stopped_flag.load())) {
+            break;
+        }
+        if (!status.ok()) {
             std::cout << "Error " << status.error_code() << " : " << status.error_message() << std::endl;
             std::cout << stream_name << " rpc failed." << std::endl;
-            std::this_thread::sleep_for(std::chrono::milliseconds(retry_delay_ms));
+            if (!retry_enabled || stopped_flag.load()) {
+                break;
+            }
+        }
+        constexpr int kSleepStepMs = 10;
+        for (int elapsed = 0;
+             elapsed < retry_delay_ms && !stopped_flag.load();
+             elapsed += kSleepStepMs) {
+            std::this_thread::sleep_for(
+                std::chrono::milliseconds(std::min(kSleepStepMs, retry_delay_ms - elapsed)));
         }
     }
 
+    // Shutdown is terminal even when it interrupts retry backoff after a
+    // transient UNAVAILABLE; callers must not mistake this for a live failure.
+    if (stopped_flag.load()) {
+        return grpc::Status(grpc::StatusCode::CANCELLED, "Stream was stopped");
+    }
     return status;
 }
 
@@ -71,60 +122,227 @@ grpcClient::grpcClient(std::shared_ptr<grpc::Channel> channel,
 // Assembles the client's payload, sends it and presents the response back from the server.
 grpc::Status grpcClient::DataExchange()
 {
-    grpc::Status status;
-    bool retry = true; // Flag that defined need connection retry or no
-
-    while(retry){
-        // Container for the data we expect from the server.
+    for (;;) {
+        if (stoppedStream.load()) {
+            return grpc::Status(grpc::StatusCode::CANCELLED, "Client was stopped");
+        }
+        Sensors snapshot;
+        {
+            std::lock_guard<std::mutex> lock(*muClient);
+            snapshot = *sensors_;
+        }
+        // Bound each attempt and never hold ROS callback mutex across I/O.
         Controls reply;
-
-        // Context for the client. It could be used to convey extra information to
-        // the server and/or tweak certain RPC behaviors.
         grpc::ClientContext context;
-
-        // The actual RPC.
-        status = stub_->DataExchange(&context, *sensors_, &reply);
-
-        std::unique_lock<std::mutex> ul(muClient);
-
-        // Act upon its status.
-        if (status.ok()){
-          *controls_ = reply;
-          retry = false;
+        if (!registerStreamContext(context)) {
+            return grpc::Status(grpc::StatusCode::CANCELLED, "Client was stopped");
         }
-        else{
-          std::cout << "DataExchange rpc failed!" << std::endl;
-          std::this_thread::sleep_for(std::chrono::milliseconds( retryDelayMilliseconds ));
+        // Registration also lets stopStream interrupt an in-flight unary RPC.
+        auto unregister = [this](grpc::ClientContext &ctx) { unregisterStreamContext(ctx); };
+        ActiveContextGuard<decltype(unregister)> context_guard{context, unregister};
+        context.set_deadline(std::chrono::system_clock::now() + std::chrono::seconds(3));
+        grpc::Status status = stub_->DataExchange(&context, snapshot, &reply);
+        if (stoppedStream.load()) {
+            return grpc::Status(grpc::StatusCode::CANCELLED, "Client was stopped");
         }
-
+        if (status.ok()) {
+            std::lock_guard<std::mutex> lock(*muClient);
+            if (stoppedStream.load()) {
+                return grpc::Status(grpc::StatusCode::CANCELLED, "Client was stopped");
+            }
+            reply.clear_velocity_command();
+            reply.clear_request_velocity_lease();
+            *controls_ = std::move(reply);
+            return status;
+        }
+        // A failed unary exchange invalidates the previous operator snapshot.
+        // Retrying must never expose commands from a dead connection to ROS.
+        {
+            std::lock_guard<std::mutex> lock(*muClient);
+            if (controls_) controls_->Clear();
+        }
+        std::cout << "DataExchange rpc failed: " << status.error_message() << std::endl;
+        if (!retryConnect) {
+            return status;
+        }
+        constexpr int kSleepStepMs = 10;
+        for (int elapsed = 0;
+             elapsed < retryDelayMilliseconds && !stoppedStream.load();
+             elapsed += kSleepStepMs) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(
+                std::min(kSleepStepMs, retryDelayMilliseconds - elapsed)));
+        }
     }
+}
 
-    return status;
+bool grpcClient::registerStreamContext(grpc::ClientContext &context)
+{
+    std::lock_guard<std::mutex> lock(muActiveContexts);
+    if (stoppedStream.load()) {
+        return false;
+    }
+    activeContexts.push_back(&context);
+    return true;
+}
+
+void grpcClient::unregisterStreamContext(grpc::ClientContext &context)
+{
+    std::lock_guard<std::mutex> lock(muActiveContexts);
+    const auto it = std::find(activeContexts.begin(), activeContexts.end(), &context);
+    if (it != activeContexts.end()) {
+        activeContexts.erase(it);
+    }
 }
 
 void grpcClient::stopStream()
 {
-    stoppedStream = true;
+    stoppedStream.store(true);
+    {
+        std::lock_guard<std::mutex> lock(velocity_hooks_mutex_);
+        if (revoke_velocity_) revoke_velocity_();
+    }
+    // A disconnected operator must not leave its last control snapshot live.
+    // This is state invalidation, not an authorized ROS motion/stop command.
+    {
+        std::lock_guard<std::mutex> lock(*muClient);
+        if (controls_) controls_->Clear();
+    }
+    std::lock_guard<std::mutex> lock(muActiveContexts);
+    for (auto *context : activeContexts) {
+        context->TryCancel();
+    }
     std::cout << "Client stopped" << std::endl;
 }
 
+// Rely on stream Write/Read status, not GetState(): new channels can be CONNECTING.
+// Gating on READY before the first write silently loses the initial snapshot.
 grpc::Status grpcClient::DataStreamExchange()
 {
     return runStreamWithRetry<grpc::ClientReaderWriter<Sensors, Controls>>(
         "DataStreamExchange",
         stoppedStream,
         retryDelayMilliseconds,
+        retryConnect,
+        [this](grpc::ClientContext &context) { return registerStreamContext(context); },
+        [this](grpc::ClientContext &context) { unregisterStreamContext(context); },
         [this](grpc::ClientContext &context) {
-            return std::shared_ptr<grpc::ClientReaderWriter<Sensors, Controls>>(
+            auto stream = std::shared_ptr<grpc::ClientReaderWriter<Sensors, Controls>>(
                 stub_->DataStreamExchange(&context));
+            if (!stream) {
+                // Failed stream creation must invalidate the previous command
+                // snapshot just like EOF and reconnect do.
+                std::lock_guard<std::mutex> lock(*muClient);
+                if (controls_) controls_->Clear();
+            }
+            return stream;
         },
-        [this](grpc::ClientReaderWriter<Sensors, Controls> &stream) {
-            while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
+        [this](grpc::ClientReaderWriter<Sensors, Controls> &stream, grpc::ClientContext &context) {
+            using Clock = std::chrono::steady_clock;
+            std::unique_lock<std::mutex> owner(velocity_stream_mutex_, std::try_to_lock);
+            rc::api::v2::VelocityLease lease;
+            std::string session;
+            // A fresh transport must observe released deadman before arming.
+            // A held request carried over a reconnect is not a new operator action.
+            bool request_held = true;
+            bool received_command = false;
+            Clock::time_point lease_deadline{};
+            const auto revoke = [&]() {
+                if (lease.granted() && revoke_velocity_) revoke_velocity_();
+                lease.Clear();
+                received_command = false;
+            };
+            while (!stoppedStream)
             {
-                std::unique_lock<std::mutex> lock(muClient);
-
-                stream.Write(*sensors_);
-                stream.Read(controls_.get());
+                Sensors outgoing;
+                {
+                    // ROS callbacks must not wait on potentially stalled network I/O.
+                    std::lock_guard<std::mutex> lock(*muClient);
+                    outgoing = *sensors_;
+                }
+                outgoing.clear_velocity_lease();
+                if (lease.granted()) *outgoing.mutable_velocity_lease() = lease;
+                const auto sent = Clock::now();
+                if (!stream.Write(outgoing)) {
+                    break;
+                }
+                Controls incoming;
+                if (!stream.Read(&incoming)) {
+                    break;
+                }
+                {
+                    std::lock_guard<std::mutex> lock(velocity_hooks_mutex_);
+                    if (owner.owns_lock() && !stoppedStream.load() &&
+                        authenticatedVelocityPeer(context) && outgoing.has_robot_info() &&
+                        outgoing.robot_info().has_base() && grant_velocity_ &&
+                        apply_velocity_ && revoke_velocity_) {
+                        const auto now = Clock::now();
+                        const bool request = incoming.request_velocity_lease();
+                        if (!request || (lease.granted() && now >= lease_deadline)) revoke();
+                        if (request && !request_held && !lease.granted() &&
+                            !incoming.has_velocity_command()) {
+                            std::string token;
+                            try {
+                                if (session.empty()) session = newVelocityIdentity();
+                                token = newVelocityIdentity();
+                            } catch (const std::exception &) {
+                                // Fail closed if the local identity source fails.
+                                token.clear();
+                            }
+                            constexpr auto duration = std::chrono::milliseconds(30000);
+                            if (!token.empty() && grant_velocity_(session, token, duration)) {
+                                lease.set_robot_id(outgoing.robot_info().robot_id());
+                                lease.set_session_id(session);
+                                lease.set_lease_id(token);
+                                lease.set_duration_ms(duration.count());
+                                lease.set_granted(true);
+                                lease_deadline = now + duration;
+                            }
+                        }
+                        request_held = request;
+                        if (lease.granted() && incoming.has_velocity_command()) {
+                            auto cmd = incoming.velocity_command();
+                            const auto elapsed = std::chrono::ceil<std::chrono::milliseconds>(now - sent).count();
+                            const auto ttl = cmd.velocity().valid_for_ms();
+                            if (!cmd.deadman() || !cmd.has_velocity() ||
+                                cmd.robot_id() != lease.robot_id() ||
+                                cmd.session_id() != lease.session_id() ||
+                                cmd.lease_id() != lease.lease_id() ||
+                                ttl > 1000 || elapsed >= ttl) {
+                                revoke();
+                            } else {
+                                cmd.mutable_velocity()->set_valid_for_ms(ttl - elapsed);
+                                if (!apply_velocity_(cmd)) revoke();
+                                else received_command = true;
+                            }
+                        } else if (received_command) {
+                            revoke();
+                        }
+                    } else if (owner.owns_lock()) {
+                        revoke();
+                    }
+                }
+                // The generic Controls snapshot must never be a second motion path.
+                incoming.clear_velocity_command();
+                incoming.clear_request_velocity_lease();
+                {
+                    std::lock_guard<std::mutex> lock(*muClient);
+                    // A late reply must not revive controls after shutdown.
+                    if (stoppedStream.load()) {
+                        break;
+                    }
+                    *controls_ = std::move(incoming);
+                }
+            }
+            if (owner.owns_lock()) {
+                std::lock_guard<std::mutex> lock(velocity_hooks_mutex_);
+                revoke();
+            }
+            // EOF or network failure invalidates the operator snapshot even
+            // when automatic reconnect is enabled. A new stream must deliver
+            // fresh controls; never reuse commands from a dead connection.
+            {
+                std::lock_guard<std::mutex> lock(*muClient);
+                if (controls_) controls_->Clear();
             }
         }
     );
@@ -136,45 +354,58 @@ grpc::Status grpcClient::MapStream()
         "MapStream",
         stoppedStream,
         retryDelayMilliseconds,
+        retryConnect,
+        [this](grpc::ClientContext &context) { return registerStreamContext(context); },
+        [this](grpc::ClientContext &context) { unregisterStreamContext(context); },
         [this](grpc::ClientContext &context) {
-            std::unique_lock<std::mutex> lock(muMap);
-            if (!map_) {
-                return std::shared_ptr<grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest>>(nullptr);
+            // Never hold the ROS map mutex while creating an RPC stream.
+            {
+                std::lock_guard<std::mutex> lock(*muMap);
+                if (!map_) {
+                    return std::shared_ptr<grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest>>(nullptr);
+                }
             }
             return std::shared_ptr<grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest>>(
                 stub_->MapStream(&context));
         },
-        [this](grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest> &stream) {
+        [this](grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest> &stream, grpc::ClientContext &) {
             map_service::GetMapRequest request;
             std::uint64_t last_seq = 0;
             bool has_seq = false;
             const int idle_sleep_ms = 10;
 
-            while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
+            while (!stoppedStream)
             {
+                map_service::GetMapResponse outgoing;
                 bool changed = false;
                 {
-                    std::unique_lock<std::mutex> lock(muMap);
-                    if (map_) {
-                        std::uint64_t seq = map_->map_seq();
-                        if (!has_seq || seq != last_seq) {
-                            last_seq = seq;
-                            has_seq = true;
-                            changed = true;
-                        }
+                    // Sequence and payload must describe the SAME snapshot.
+                    // No map hashing, and no mutex held over gRPC Write/Read.
+                    std::lock_guard<std::mutex> lock(*muMap);
+                    if (map_ && map_->has_map() && ((map_->map().width() == 0 && map_->map().height() == 0 && map_->map().data().empty()) ||
+                         (map_->map().width() > 0 && map_->map().height() > 0 &&
+                           std::isfinite(map_->map().resolution()) && map_->map().resolution() > 0.0f &&
+                          map_->map().data().size() ==
+                              static_cast<std::uint64_t>(map_->map().width()) * map_->map().height())) &&
+                        (!has_seq || map_->map_seq() != last_seq)) {
+                        outgoing = *map_;
+                        // Pose and zones have independent streams. A map
+                        // revision must not replay stale copies of either.
+                        outgoing.clear_robotpose();
+                        outgoing.clear_zone_map();
+                        outgoing.clear_zone_seq();
+                        last_seq = outgoing.map_seq();
+                        has_seq = true;
+                        changed = true;
                     }
                 }
                 if (!changed) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(idle_sleep_ms));
                     continue;
                 }
-                {
-                    std::unique_lock<std::mutex> lock(muMap);
-                    if (map_) {
-                        stream.Write(*map_);
-                    }
+                if (!stream.Write(outgoing) || !stream.Read(&request)) {
+                    break;  // Return to retry policy instead of spinning.
                 }
-                stream.Read(&request);
             }
         }
     );
@@ -186,27 +417,34 @@ grpc::Status grpcClient::PoseStream()
         "PoseStream",
         stoppedStream,
         retryDelayMilliseconds,
+        retryConnect,
+        [this](grpc::ClientContext &context) { return registerStreamContext(context); },
+        [this](grpc::ClientContext &context) { unregisterStreamContext(context); },
         [this](grpc::ClientContext &context) {
-            std::unique_lock<std::mutex> lock(muMap);
-            if (!map_) {
-                return std::shared_ptr<grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest>>(nullptr);
+            {
+                std::lock_guard<std::mutex> lock(*muMap);
+                if (!map_) {
+                    return std::shared_ptr<grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest>>(nullptr);
+                }
             }
             return std::shared_ptr<grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest>>(
                 stub_->PoseStream(&context));
         },
-        [this](grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest> &stream) {
+        [this](grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest> &stream, grpc::ClientContext &) {
             map_service::PoseRequest request;
             map_service::PoseState state;
             map_service::Pose last_pose;
             bool has_pose = false;
             const int idle_sleep_ms = 10;
 
-            while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
+            while (!stoppedStream)
             {
                 bool changed = false;
                 {
-                    std::unique_lock<std::mutex> lock(muMap);
-                    if (map_) {
+                    std::unique_lock<std::mutex> lock(*muMap);
+                    // Do not emit a fabricated zero pose before the first
+                    // odometry sample. Reconnect still sends the first real pose.
+                    if (map_ && map_->has_robotpose()) {
                         *state.mutable_pose() = map_->robotpose();
                         if (!has_pose || !poseEquals(state.pose(), last_pose)) {
                             last_pose = state.pose();
@@ -219,8 +457,9 @@ grpc::Status grpcClient::PoseStream()
                     std::this_thread::sleep_for(std::chrono::milliseconds(idle_sleep_ms));
                     continue;
                 }
-                stream.Write(state);
-                stream.Read(&request);
+                if (!stream.Write(state) || !stream.Read(&request)) {
+                    break;
+                }
             }
         }
     );
@@ -232,47 +471,49 @@ grpc::Status grpcClient::ZoneStream()
         "ZoneStream",
         stoppedStream,
         retryDelayMilliseconds,
+        retryConnect,
+        [this](grpc::ClientContext &context) { return registerStreamContext(context); },
+        [this](grpc::ClientContext &context) { unregisterStreamContext(context); },
         [this](grpc::ClientContext &context) {
-            std::unique_lock<std::mutex> lock(muMap);
-            if (!map_) {
-                return std::shared_ptr<grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest>>(nullptr);
+            {
+                std::lock_guard<std::mutex> lock(*muMap);
+                if (!map_) {
+                    return std::shared_ptr<grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest>>(nullptr);
+                }
             }
             return std::shared_ptr<grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest>>(
                 stub_->ZoneStream(&context));
         },
-        [this](grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest> &stream) {
+        [this](grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest> &stream, grpc::ClientContext &) {
             map_service::ZoneRequest request;
             map_service::ZoneState state;
             std::uint64_t last_seq = 0;
             bool has_seq = false;
             const int idle_sleep_ms = 10;
 
-            while(!stoppedStream && (clientChannel->GetState(true) == GRPC_CHANNEL_READY))
+            while (!stoppedStream)
             {
                 bool changed = false;
                 {
-                    std::unique_lock<std::mutex> lock(muMap);
-                    if (map_) {
-                        std::uint64_t seq = map_->zone_seq();
-                        if (!has_seq || seq != last_seq) {
-                            last_seq = seq;
-                            has_seq = true;
-                            changed = true;
-                        }
+                    // Bind the zone payload to the very sequence we observed.
+                    // Never perform RPC I/O with the map mutex held.
+                    std::lock_guard<std::mutex> lock(*muMap);
+                    if (map_ && map_->has_zone_map() &&
+                        (!has_seq || map_->zone_seq() != last_seq)) {
+                        *state.mutable_zone_map() = map_->zone_map();
+                        state.set_zone_seq(map_->zone_seq());
+                        last_seq = map_->zone_seq();
+                        has_seq = true;
+                        changed = true;
                     }
                 }
                 if (!changed) {
                     std::this_thread::sleep_for(std::chrono::milliseconds(idle_sleep_ms));
                     continue;
                 }
-                {
-                    std::unique_lock<std::mutex> lock(muMap);
-                    if (map_) {
-                        *state.mutable_zone_map() = map_->zone_map();
-                    }
+                if (!stream.Write(state) || !stream.Read(&request)) {
+                    break;
                 }
-                stream.Write(state);
-                stream.Read(&request);
             }
         }
     );

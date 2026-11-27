@@ -1,9 +1,14 @@
 #ifndef GCLIENT_H
 #define GCLIENT_H
 
+#include <atomic>
 #include <iostream>
 #include <thread>
 #include <chrono>
+#include <mutex>
+#include <vector>
+#include <functional>
+#include <utility>
 
 #include <grpcpp/grpcpp.h>
 
@@ -33,7 +38,12 @@ class grpcClient
     std::shared_ptr<map_service::GetMapResponse> map_;
 
     /// Flag indicating whether the streaming has been stopped.
-    bool stoppedStream = true;
+    // A stopped instance never restarts; reconnect constructs a new client.
+    std::atomic<bool> stoppedStream{false};
+    std::mutex muActiveContexts;
+    std::vector<grpc::ClientContext*> activeContexts;
+    bool registerStreamContext(grpc::ClientContext &context);
+    void unregisterStreamContext(grpc::ClientContext &context);
     /// Flag to indicate whether to retry connection if it fails.
     bool retryConnect;
     /// Delay (in milliseconds) between connection retry attempts.
@@ -44,7 +54,25 @@ class grpcClient
     /// Mutex to protect map data.
     std::shared_ptr<std::mutex> muMap;
 
+    // Only the single owning authenticated DataStreamExchange may invoke these.
+    std::mutex velocity_stream_mutex_;
+    std::mutex velocity_hooks_mutex_;
+    std::function<bool(const std::string&, const std::string&, std::chrono::milliseconds)> grant_velocity_;
+    std::function<bool(const rc::api::v2::VelocityCommand&)> apply_velocity_;
+    std::function<void()> revoke_velocity_;
+
  public:
+    void setVelocityCallbacks(
+        std::function<bool(const std::string&, const std::string&, std::chrono::milliseconds)> grant,
+        std::function<bool(const rc::api::v2::VelocityCommand&)> apply,
+        std::function<void()> revoke)
+    {
+        std::lock_guard<std::mutex> lock(velocity_hooks_mutex_);
+        grant_velocity_ = std::move(grant);
+        apply_velocity_ = std::move(apply);
+        revoke_velocity_ = std::move(revoke);
+    }
+
     /**
      * @brief Constructs a new grpcClient object.
      *
@@ -110,7 +138,9 @@ class grpcClient
     /**
      * @brief Stops the current data stream.
      *
-     * Sets the stoppedStream flag to true, indicating that streaming should cease.
+     * Cancels in-flight stream contexts (including blocked Read/Write).
+     * This is transport cancellation, NOT a robot velocity safety watchdog.
+     * A stopped instance cannot restart: reconnect creates a new client.
      */
     void stopStream();
 
