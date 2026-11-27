@@ -6,6 +6,7 @@
 #include <geometry_msgs/msg/twist_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <memory>
+#include <chrono>
 #include <mutex>
 #include <vector>
 #include "robot.grpc.pb.h"
@@ -24,7 +25,8 @@ public:
 
     explicit BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &grpcMutex,
                              const rclcpp::NodeOptions &options = rclcpp::NodeOptions(),
-                             const rc::api::v2::BaseInfo *profile = nullptr);
+                             const rc::api::v2::BaseInfo *profile = nullptr,
+                             std::shared_ptr<Robot::Sensors> sensors = nullptr);
     ~BaseControlNode();
 
     void publishToBaseControlNode(const geometry_msgs::msg::Twist& twist_msg,
@@ -38,6 +40,7 @@ private:
 
     void odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg);
     void checkVelocityWatchdog();
+    void clearStaleOdometry();
     // Called only after the transport authenticates a session and grants a lease.
     // Never expose this method through a generic ROS command topic.
     bool publishLeasedVelocity(const rc::api::v2::Velocity& velocity,
@@ -63,6 +66,10 @@ private:
 
     Base::BaseControl* baseControlProtoMsg_;
     std::mutex &grpc_mutex_;
+    std::shared_ptr<Robot::Sensors> sensors_;
+    std::chrono::steady_clock::time_point last_odom_received_{};
+    std::chrono::milliseconds odom_stale_timeout_{1000};
+    rclcpp::TimerBase::SharedPtr odom_freshness_timer_;
 
     std::unique_ptr<ControlStateMachine> state_machine_;
 

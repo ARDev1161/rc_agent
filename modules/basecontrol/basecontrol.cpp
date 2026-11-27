@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <iterator>
 #include <array>
+#include <utility>
 
 using namespace std::chrono_literals;
 
@@ -118,10 +119,12 @@ private:
 
 BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &grpcMutex,
                                  const rclcpp::NodeOptions &options,
-                                 const rc::api::v2::BaseInfo *profile) :
+                                 const rc::api::v2::BaseInfo *profile,
+                                 std::shared_ptr<Robot::Sensors> sensors) :
     Node("basecontrol_monitor", options),
     baseControlProtoMsg_(baseControlMsg),
     grpc_mutex_(grpcMutex),
+    sensors_(std::move(sensors)),
     state_machine_(std::make_unique<ControlStateMachine>(this->now()))
 {
     const auto odom_topic = this->declare_parameter<std::string>("basecontrol.odom_topic", "/odom");
@@ -129,7 +132,14 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
         throw std::invalid_argument("basecontrol.odom_topic must not be empty");
     }
     odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
-        odom_topic, 10, std::bind(&BaseControlNode::odomCallback, this, std::placeholders::_1));
+        odom_topic, rclcpp::SensorDataQoS(), std::bind(&BaseControlNode::odomCallback, this, std::placeholders::_1));
+    if (sensors_) {
+        const auto timeout = this->declare_parameter<int64_t>("basecontrol.odom_stale_timeout_ms", 1000);
+        if (timeout <= 0) throw std::invalid_argument("Odometry freshness timeout must be positive");
+        odom_stale_timeout_ = std::chrono::milliseconds(timeout);
+        odom_freshness_timer_ = this->create_wall_timer(
+            250ms, std::bind(&BaseControlNode::clearStaleOdometry, this));
+    }
     RCLCPP_INFO(this->get_logger(), "Subscribed to odometry topic %s", odom_topic.c_str());
 
     cmd_vel_topic_ = this->declare_parameter<std::string>("basecontrol.cmd_vel_topic", "/cmd_vel");
@@ -398,8 +408,70 @@ BaseControlNode::ControlStatus BaseControlNode::getBaseControlStatus() {
     return current_status_;
 }
 
+void BaseControlNode::clearStaleOdometry() {
+    if (!sensors_) return;
+    std::lock_guard<std::mutex> lock(grpc_mutex_);
+    if (sensors_->has_base_state() &&
+        std::chrono::steady_clock::now() - last_odom_received_ >= odom_stale_timeout_) {
+        sensors_->clear_base_state();
+    }
+}
+
 void BaseControlNode::odomCallback(const nav_msgs::msg::Odometry::SharedPtr msg) {
+    if (!msg) return;
     const auto now = this->now();
+
+    // Odometry pose is in header.frame_id; twist is in child_frame_id.
+    // Report the measurements, not the last requested command.
+    const auto finite3 = [](const auto &v) {
+        return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+    };
+    const auto &measured = msg->twist.twist;
+    const bool valid_twist = finite3(measured.linear) && finite3(measured.angular);
+    if (sensors_) {
+        rc::api::v2::BaseState state;
+        state.set_stamp_ns(static_cast<int64_t>(msg->header.stamp.sec) * 1000000000LL +
+                           msg->header.stamp.nanosec);
+        const auto copy3 = [](const auto &from, rc::api::v2::Vector3 *to) {
+            to->set_x(from.x);
+            to->set_y(from.y);
+            to->set_z(from.z);
+        };
+        if (valid_twist && !msg->child_frame_id.empty()) {
+            auto *velocity = state.mutable_velocity();
+            velocity->set_frame_id(msg->child_frame_id);
+            copy3(measured.linear, velocity->mutable_linear());
+            copy3(measured.angular, velocity->mutable_angular());
+            const bool moving = std::abs(measured.linear.x) > kVelocityEpsilon ||
+                                std::abs(measured.linear.y) > kVelocityEpsilon ||
+                                std::abs(measured.linear.z) > kVelocityEpsilon ||
+                                std::abs(measured.angular.x) > kVelocityEpsilon ||
+                                std::abs(measured.angular.y) > kVelocityEpsilon ||
+                                std::abs(measured.angular.z) > kVelocityEpsilon;
+            state.set_status(moving ? rc::api::v2::BaseState::MOVING : rc::api::v2::BaseState::STOPPED);
+        }
+        const auto &pose = msg->pose.pose;
+        const auto &q = pose.orientation;
+        const double norm = std::hypot(std::hypot(q.x, q.y), std::hypot(q.z, q.w));
+        if (finite3(pose.position) && std::isfinite(norm) &&
+            std::abs(norm - 1.0) <= 0.001 && !msg->header.frame_id.empty()) {
+            auto *out = state.mutable_pose();
+            out->set_frame_id(msg->header.frame_id);
+            copy3(pose.position, out->mutable_position());
+            auto *orientation = out->mutable_orientation();
+            orientation->set_x(q.x / norm);
+            orientation->set_y(q.y / norm);
+            orientation->set_z(q.z / norm);
+            orientation->set_w(q.w / norm);
+        }
+        std::lock_guard<std::mutex> lock(grpc_mutex_);
+        if (state.has_velocity() || state.has_pose()) {
+            *sensors_->mutable_base_state() = std::move(state);
+            last_odom_received_ = std::chrono::steady_clock::now();
+        } else {
+            sensors_->clear_base_state();
+        }
+    }
 
     // Keep the odometry sample and state transition atomic with respect to
     // concurrent callbacks in a MultiThreadedExecutor.

@@ -930,7 +930,7 @@ int main(int argc, char **argv)
   std::shared_ptr<BaseControlNode> baseControlNode;
   if (base_info) {
     baseControlNode = std::make_shared<BaseControlNode>(
-      nullptr, *network->getClientInstance()->getMutex(), base_options, &*base_info);
+      nullptr, *network->getClientInstance()->getMutex(), base_options, &*base_info, sensorsPtr);
   }
   // Read the same trusted Nav2 profile used by the libconfig GTests.
   // These are gateway-local bindings, not remote-selected action names.
