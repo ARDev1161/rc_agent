@@ -36,6 +36,8 @@ message Controls{
      Light light = 6;
      System system = 7;
      video.VideoConfig video_config = 8;
+     // Reserved for the authorized v2 path; do not dispatch until wired.
+     .rc.api.v2.VelocityCommand velocity_command = 9;
 }
 
 message Sensors{
@@ -51,6 +53,7 @@ message Sensors{
      video.VideoStream video_stream = 8;
      // Additive v2 capability announcement; old receivers ignore field 9.
      .rc.api.v2.RobotInfo robot_info = 9;
+     .rc.api.v2.BaseState base_state = 10;
 }
 
 service ClientOnRobot{

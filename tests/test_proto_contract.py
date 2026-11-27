@@ -18,7 +18,7 @@ class LegacyWireContract(unittest.TestCase):
         self.assertEqual({
             "cameraServos": 1, "wheelMotors": 2, "handMotors": 3,
             "baseControl": 4, "navControl": 5, "light": 6,
-            "system": 7, "video_config": 8,
+            "system": 7, "video_config": 8, "velocity_command": 9,
         }, actual)
 
     def test_existing_sensors_fields_and_additive_robot_info(self):
@@ -26,7 +26,7 @@ class LegacyWireContract(unittest.TestCase):
         self.assertEqual({
             "wheelEncoders": 1, "handEncoders": 2, "baseControlStatus": 3,
             "navControlStatus": 4, "batteryState": 5, "imu": 6,
-            "CPUTemperature": 7, "video_stream": 8, "robot_info": 9,
+            "CPUTemperature": 7, "video_stream": 8, "robot_info": 9, "base_state": 10,
         }, actual)
         self.assertEqual(
             robot_pb2.Sensors.DESCRIPTOR.fields_by_name["robot_info"].message_type.full_name,

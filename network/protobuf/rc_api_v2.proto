@@ -19,6 +19,67 @@ message RobotInfo {
   uint32 api_major = 3;     // 2 for this contract.
   uint32 api_minor = 4;
   repeated RobotCapability capabilities = 5;
+  // For API 2.1+, absence means no controllable base; 2.0 did not describe it.
+  BaseInfo base = 6;
+}
+
+// Physical axes independent of robot kinematics. Limits are signed SI
+// bounds, and an axis omitted from BaseInfo is not controllable.
+enum VelocityAxis {
+  VELOCITY_AXIS_UNSPECIFIED = 0;
+  LINEAR_X = 1;
+  LINEAR_Y = 2;
+  LINEAR_Z = 3;
+  ANGULAR_X = 4;
+  ANGULAR_Y = 5;
+  ANGULAR_Z = 6;
+}
+
+message AxisVelocityLimit {
+  VelocityAxis axis = 1;
+  double min_velocity = 2;
+  double max_velocity = 3;
+}
+
+message BaseInfo {
+  string command_frame_id = 1;
+  repeated AxisVelocityLimit axis_limits = 2;
+}
+
+message Quaternion {
+  double x = 1;
+  double y = 2;
+  double z = 3;
+  double w = 4;
+}
+
+// Measured values, not a command or a lease. Absent submessages mean
+// unavailable measurements, not zero motion or identity pose.
+message MeasuredTwist {
+  Vector3 linear = 1;
+  Vector3 angular = 2;
+  string frame_id = 3;
+}
+
+message MeasuredPose {
+  Vector3 position = 1;
+  Quaternion orientation = 2;
+  string frame_id = 3;
+}
+
+message BaseState {
+  enum Status {
+    STATUS_UNKNOWN = 0;
+    READY = 1;
+    MOVING = 2;
+    STOPPED = 3;
+    ERROR = 4;
+  }
+  MeasuredTwist velocity = 1;
+  MeasuredPose pose = 2;
+  Status status = 3;
+  // Source ROS clock; simulation time is allowed. Not a TTL clock.
+  int64 stamp_ns = 4;
 }
 
 // v2 values are SI units in the frame_id specified by the robot interface.

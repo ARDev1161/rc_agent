@@ -4,6 +4,21 @@
 >
 > Coordinated branches: [AmurCore](https://github.com/ARDev1161/AmurCore/tree/feat/rc-api-v2) · [rc_agent](https://github.com/ARDev1161/rc_agent/tree/feat/rc-api-v2) · [robot_orchestrator](https://github.com/ARDev1161/robot_orchestrator/tree/feat/rc-api-v2) · [ros2_rknn_llm](https://github.com/ARDev1161/ros2_rknn_llm/tree/feat/rc-api-v2). The canonical architectural decisions are in [AmurCore/PLAN.md](https://github.com/ARDev1161/AmurCore/blob/feat/rc-api-v2/PLAN.md); each repository keeps a locally actionable copy of the plan.
 
+## Active owner-approved base prototype — 2026-11-27
+
+This section governs current work and supersedes conflicting historical handoffs and phase ordering for the base lane only. Retain the v2-only and safe-motion requirements. Work in both feature branches; do not merge.
+
+**V1: functional prototype first.** Complete the entire base flow before polishing or expanding tests. Keep a brief list of nonblocking defects for the owner after V1. Fix build blockers and safety issues immediately. V2 fixes agreed defects; V3 integration/acceptance. Pause after V1 for review.
+
+- [ ] Shared base contract: six SI components, optional BaseInfo with supported axes/limits/frame, measured BaseState, authorized VelocityCommand. Schema fields added in this change; runtime wiring pending. API 2.1 advertisement only after profile generation is implemented. Keep legacy callers until replacement; no new dependence on individual wheels/joints.
+- [ ] RC Agent: one local base profile for descriptor and enforcement; optional base node, cmd_vel/odom/frame, Twist/TwistStamped, finite signed limits.
+- [ ] Wire authenticated session/lease/velocity into the existing transport or minimal extension; TTL, sequence, deadman, local watchdog, disconnect stop. Never bypass the existing gate. No nonzero motion enabled by this schema-only change.
+- [ ] Adapt existing ManualControl without SDL refactor; SI command and BaseState feedback.
+- [ ] Minimal behavioral acceptance: differential, omni, no base; real peer to ROS2, stop/expiry, axes/limits, SI. Use existing CI; no tests of source text or coverage-driven expansion. Hardware acceptance remains open.
+- Manipulators: design only, TCP pose/twist via configured MoveIt actions/Servo topics or equivalent controller; FK/IK stays on robot. No implementation until a robot/simulator is selected.
+- Out of scope: video, map rendering, Nav2 lifecycle, SDL, chat/LLM; no mass rollback.
+- Checkpoint: this commit adds mirrored protobuf fields and adjusts existing Python descriptor expectations only. C++ wiring, builds, and runtime tests NOT RUN. Next: implement the local base profile and descriptor/state publishing, then authorized transport. Do not interpret schema or green compilation as a working prototype.
+
 ## Product contract (approved requirements)
 - **AmurCore is an operator workstation, NOT a robot controller, LLM planner, PDDL engine or fleet scheduler.** Operator can select one of many connected robots and use joystick/camera/map; give direct Nav2 goals; submit text/audio to an orchestrator; observe autonomous tasks.
 - **rc_agent is a configurable protocol gateway** between the workstation and *pre-existing* robot ROS 2 topics/services/actions or local gRPC endpoints. Never put inverse kinematics, gait, balancing, motor drivers, path planning, task scheduling, or LLM processing in rc_agent.
