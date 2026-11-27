@@ -241,7 +241,9 @@ grpc::Status grpcClient::DataStreamExchange()
             std::unique_lock<std::mutex> owner(velocity_stream_mutex_, std::try_to_lock);
             rc::api::v2::VelocityLease lease;
             std::string session;
-            bool request_held = false;
+            // A fresh transport must observe released deadman before arming.
+            // A held request carried over a reconnect is not a new operator action.
+            bool request_held = true;
             bool received_command = false;
             Clock::time_point lease_deadline{};
             const auto revoke = [&]() {
@@ -278,10 +280,16 @@ grpc::Status grpcClient::DataStreamExchange()
                         if (!request || (lease.granted() && now >= lease_deadline)) revoke();
                         if (request && !request_held && !lease.granted() &&
                             !incoming.has_velocity_command()) {
-                            if (session.empty()) session = newVelocityIdentity();
-                            const auto token = newVelocityIdentity();
+                            std::string token;
+                            try {
+                                if (session.empty()) session = newVelocityIdentity();
+                                token = newVelocityIdentity();
+                            } catch (const std::exception &) {
+                                // Fail closed if the local identity source fails.
+                                token.clear();
+                            }
                             constexpr auto duration = std::chrono::milliseconds(30000);
-                            if (grant_velocity_(session, token, duration)) {
+                            if (!token.empty() && grant_velocity_(session, token, duration)) {
                                 lease.set_robot_id(outgoing.robot_info().robot_id());
                                 lease.set_session_id(session);
                                 lease.set_lease_id(token);
