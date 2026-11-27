@@ -23,7 +23,8 @@ public:
     };
 
     explicit BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &grpcMutex,
-                             const rclcpp::NodeOptions &options = rclcpp::NodeOptions());
+                             const rclcpp::NodeOptions &options = rclcpp::NodeOptions(),
+                             const rc::api::v2::BaseInfo *profile = nullptr);
     ~BaseControlNode();
 
     void publishToBaseControlNode(const geometry_msgs::msg::Twist& twist_msg,
@@ -55,6 +56,7 @@ private:
     std::string cmd_vel_msg_type_;
     std::string cmd_vel_frame_id_;
     std::vector<std::string> velocity_axes_; // Trusted local robot descriptor
+    rc::api::v2::BaseInfo base_info_; // Immutable copy of the advertised local profile
 
     double actual_linear_vel_ = 0.0;
     double actual_angular_vel_ = 0.0;

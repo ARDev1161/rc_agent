@@ -13,6 +13,9 @@
 #include <cstring>
 #include <unordered_set>
 #include <stdexcept>
+#include <cmath>
+#include <optional>
+#include <array>
 
 #include "config/configprocessor.h"
 #include "config/endpoint_bindings.h"
@@ -66,9 +69,10 @@ std::string resolveVideoPipeline()
 }
 
 // Advertise only semantic capabilities. ROS2/gRPC endpoints remain trusted local config.
-void configureRobotInfo(Sensors &sensors, const std::string &config_path)
+std::optional<rc::api::v2::BaseInfo> configureRobotInfo(
+    Sensors &sensors, ConfigProcessor &config,
+    const BaseControlEndpointProfile &endpoints)
 {
-  ConfigProcessor config(config_path);
   std::string robot_id;
   if (config.searchString("Amur.API.robot_id", robot_id) != EXIT_SUCCESS ||
       robot_id.empty()) {
@@ -117,7 +121,7 @@ void configureRobotInfo(Sensors &sensors, const std::string &config_path)
   info->set_robot_id(robot_id);
   info->set_display_name(name);
   info->set_api_major(2);
-  info->set_api_minor(0);
+  info->set_api_minor(1);
   for (const auto &id : capabilities) {
     auto *capability = info->add_capabilities();
     capability->set_id(id);
@@ -127,9 +131,37 @@ void configureRobotInfo(Sensors &sensors, const std::string &config_path)
       }
     }
   }
+  std::optional<rc::api::v2::BaseInfo> base;
+  if (manual_velocity) {
+    using namespace rc::api::v2;
+    const std::array<VelocityAxis, 6> ids{
+      LINEAR_X, LINEAR_Y, LINEAR_Z, ANGULAR_X, ANGULAR_Y, ANGULAR_Z};
+    const std::array<std::string, 6> names{
+      "linear.x", "linear.y", "linear.z", "angular.x", "angular.y", "angular.z"};
+    base.emplace();
+    base->set_command_frame_id(endpoints.cmd_vel_frame);
+    for (const auto &axis : axes) {
+      const auto i = std::distance(names.begin(), std::find(names.begin(), names.end(), axis));
+      std::string key = "Amur.API.base_limits." + axis;
+      std::replace(key.begin() + std::string("Amur.API.base_limits.").size(), key.end(), '.', '_');
+      float minimum = 0.0f, maximum = 0.0f;
+      if (config.searchFloat(key + ".min", minimum) != EXIT_SUCCESS ||
+          config.searchFloat(key + ".max", maximum) != EXIT_SUCCESS ||
+          !std::isfinite(minimum) || !std::isfinite(maximum) ||
+          minimum > 0.0f || maximum < 0.0f || minimum >= maximum) {
+        throw std::invalid_argument("Invalid or missing signed SI bounds: " + key);
+      }
+      auto *limit = base->add_axis_limits();
+      limit->set_axis(ids.at(i));
+      limit->set_min_velocity(minimum);
+      limit->set_max_velocity(maximum);
+    }
+    *info->mutable_base() = *base;
+  }
   RCLCPP_INFO(rclcpp::get_logger("rc_agent"),
-              "Announcing robot %s (%zu capabilities), RC API v2",
+              "Announcing robot %s (%zu capabilities), RC API 2.1",
               robot_id.c_str(), capabilities.size());
+  return base;
 }
 
 }  // namespace
@@ -808,7 +840,9 @@ int main(int argc, char **argv)
   auto sensorsPtr = std::make_shared<Sensors>();
   const std::string robot_config_path =
     paramNode->declare_parameter<std::string>("robot_config_path", "robot.cfg");
-  configureRobotInfo(*sensorsPtr, robot_config_path);
+  ConfigProcessor endpoint_config(robot_config_path);
+  const auto base_profile = loadBaseControlEndpointProfile(endpoint_config);
+  const auto base_info = configureRobotInfo(*sensorsPtr, endpoint_config, base_profile);
   auto mapPtr = std::make_shared<GetMapResponse>();
   std::string video_pipeline = param_pipeline;
   if (video_pipeline.empty()) {
@@ -862,11 +896,9 @@ int main(int argc, char **argv)
   }
   // Robot-specific ROS2 bindings live in libconfig; ROS2 parameters remain
   // independently usable for runtime tuning. The defaults preserve dev wiring.
-  ConfigProcessor endpoint_config(robot_config_path);
   const auto map_profile = loadMapEndpointProfile(endpoint_config);
   // Resolve all basecontrol endpoints from the same trusted libconfig
   // profile, including the two legacy auxiliary outputs.
-  const auto base_profile = loadBaseControlEndpointProfile(endpoint_config);
   rclcpp::NodeOptions base_options;
   base_options.parameter_overrides({
     rclcpp::Parameter("basecontrol.odom_topic", base_profile.odom_topic),
@@ -875,9 +907,11 @@ int main(int argc, char **argv)
     rclcpp::Parameter("basecontrol.cmd_vel_frame_id", base_profile.cmd_vel_frame),
     rclcpp::Parameter("basecontrol.velocity_axes", [&]() {
       std::vector<std::string> axes;
-      for (const auto &cap : sensorsPtr->robot_info().capabilities()) {
-        if (cap.id() == "manual.velocity") {
-          for (const auto &axis : cap.velocity_axes()) axes.push_back(axis);
+      if (base_info) {
+        const std::array<const char*, 6> names{
+          "linear.x", "linear.y", "linear.z", "angular.x", "angular.y", "angular.z"};
+        for (const auto &limit : base_info->axis_limits()) {
+          axes.emplace_back(names.at(static_cast<std::size_t>(limit.axis()) - 1));
         }
       }
       return axes;
@@ -893,9 +927,11 @@ int main(int argc, char **argv)
   auto mapNode = std::make_shared<MapNode>(mapPtr, map_profile.map_topic,
                                            map_profile.zones_topic,
                                            network->getClientInstance()->getMapMutex(), map_options);
-  auto baseControlNode = std::make_shared<BaseControlNode>(
-    controlsPtr->mutable_basecontrol(),
-    *network->getClientInstance()->getMutex(), base_options);
+  std::shared_ptr<BaseControlNode> baseControlNode;
+  if (base_info) {
+    baseControlNode = std::make_shared<BaseControlNode>(
+      nullptr, *network->getClientInstance()->getMutex(), base_options, &*base_info);
+  }
   // Read the same trusted Nav2 profile used by the libconfig GTests.
   // These are gateway-local bindings, not remote-selected action names.
   const auto nav_profile = loadNav2EndpointProfile(endpoint_config);
@@ -926,7 +962,9 @@ int main(int argc, char **argv)
     executor.add_node(batteryStateNode);
   }
   executor.add_node(mapNode);
-  executor.add_node(baseControlNode);
+  if (baseControlNode) {
+    executor.add_node(baseControlNode);
+  }
   executor.add_node(navigatorNode);
 
   // Spin the executor to keep the nodes running

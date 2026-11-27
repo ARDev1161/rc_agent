@@ -5,6 +5,7 @@
 #include <cctype>
 #include <stdexcept>
 #include <iterator>
+#include <array>
 
 using namespace std::chrono_literals;
 
@@ -116,7 +117,8 @@ private:
 };
 
 BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &grpcMutex,
-                                 const rclcpp::NodeOptions &options) :
+                                 const rclcpp::NodeOptions &options,
+                                 const rc::api::v2::BaseInfo *profile) :
     Node("basecontrol_monitor", options),
     baseControlProtoMsg_(baseControlMsg),
     grpc_mutex_(grpcMutex),
@@ -148,6 +150,23 @@ BaseControlNode::BaseControlNode(Base::BaseControl *baseControlMsg, std::mutex &
             throw std::invalid_argument("Invalid or duplicate basecontrol.velocity_axes entry: " + axis);
         }
         seen_axes.push_back(axis);
+    }
+    if (profile) {
+        base_info_ = *profile;
+        if (base_info_.command_frame_id() != cmd_vel_frame_id_ ||
+            base_info_.axis_limits_size() != static_cast<int>(velocity_axes_.size())) {
+            throw std::invalid_argument("Base descriptor does not match ROS velocity configuration");
+        }
+        for (int i = 0; i < base_info_.axis_limits_size(); ++i) {
+            const auto &limit = base_info_.axis_limits(i);
+            const auto axis = static_cast<int>(limit.axis());
+            if (axis < 1 || axis > 6 || velocity_axes_.at(i) != kKnownAxes[axis - 1] ||
+                !std::isfinite(limit.min_velocity()) || !std::isfinite(limit.max_velocity()) ||
+                limit.min_velocity() > 0.0 || limit.max_velocity() < 0.0 ||
+                limit.min_velocity() >= limit.max_velocity()) {
+                throw std::invalid_argument("Invalid base velocity limit");
+            }
+        }
     }
     std::transform(cmd_vel_msg_type_.begin(), cmd_vel_msg_type_.end(), cmd_vel_msg_type_.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
@@ -293,6 +312,16 @@ bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocit
         (velocity.angular().z() != 0.0 && !supported("angular.z"))) {
         velocity_gate_.revoke();
         return false;
+    }
+    const std::array<double, 6> components{
+        velocity.linear().x(), velocity.linear().y(), velocity.linear().z(),
+        velocity.angular().x(), velocity.angular().y(), velocity.angular().z()};
+    for (const auto &limit : base_info_.axis_limits()) {
+        const double value = components.at(static_cast<std::size_t>(limit.axis()) - 1);
+        if (!std::isfinite(value) || value < limit.min_velocity() || value > limit.max_velocity()) {
+            velocity_gate_.revoke();
+            return false;
+        }
     }
     if (!velocity_gate_.admit(velocity, session, lease, deadman, now)) {
         // The 50 ms watchdog publishes the latched zero after this lock releases.
