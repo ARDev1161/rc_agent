@@ -36,8 +36,9 @@ message Controls{
      Light light = 6;
      System system = 7;
      video.VideoConfig video_config = 8;
-     // Reserved for the authorized v2 path; do not dispatch until wired.
      .rc.api.v2.VelocityCommand velocity_command = 9;
+     // Hold while requesting manual control; release to rearm after expiry.
+     bool request_velocity_lease = 10;
 }
 
 message Sensors{
@@ -54,6 +55,8 @@ message Sensors{
      // Additive v2 capability announcement; old receivers ignore field 9.
      .rc.api.v2.RobotInfo robot_info = 9;
      .rc.api.v2.BaseState base_state = 10;
+     // Only emitted on the authenticated stream that owns this grant.
+     .rc.api.v2.VelocityLease velocity_lease = 11;
 }
 
 service ClientOnRobot{

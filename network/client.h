@@ -7,6 +7,8 @@
 #include <chrono>
 #include <mutex>
 #include <vector>
+#include <functional>
+#include <utility>
 
 #include <grpcpp/grpcpp.h>
 
@@ -52,7 +54,25 @@ class grpcClient
     /// Mutex to protect map data.
     std::shared_ptr<std::mutex> muMap;
 
+    // Only the single owning authenticated DataStreamExchange may invoke these.
+    std::mutex velocity_stream_mutex_;
+    std::mutex velocity_hooks_mutex_;
+    std::function<bool(const std::string&, const std::string&, std::chrono::milliseconds)> grant_velocity_;
+    std::function<bool(const rc::api::v2::VelocityCommand&)> apply_velocity_;
+    std::function<void()> revoke_velocity_;
+
  public:
+    void setVelocityCallbacks(
+        std::function<bool(const std::string&, const std::string&, std::chrono::milliseconds)> grant,
+        std::function<bool(const rc::api::v2::VelocityCommand&)> apply,
+        std::function<void()> revoke)
+    {
+        std::lock_guard<std::mutex> lock(velocity_hooks_mutex_);
+        grant_velocity_ = std::move(grant);
+        apply_velocity_ = std::move(apply);
+        revoke_velocity_ = std::move(revoke);
+    }
+
     /**
      * @brief Constructs a new grpcClient object.
      *

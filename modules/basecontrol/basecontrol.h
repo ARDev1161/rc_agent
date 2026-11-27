@@ -34,6 +34,12 @@ public:
 
     ControlStatus getBaseControlStatus();
 
+    // Internal callbacks for the authenticated transport only. Not ROS endpoints.
+    bool grantVelocityLease(const std::string &session, const std::string &lease,
+                            std::chrono::milliseconds duration);
+    bool applyVelocityCommand(const rc::api::v2::VelocityCommand &command);
+    void revokeVelocityLease();
+
 private:
     friend class VelocityWatchdogTestPeer; // DDS fixture, not a production grant API
     class ControlStateMachine;

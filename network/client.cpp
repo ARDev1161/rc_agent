@@ -2,9 +2,27 @@
 #include "client.h"
 #include <cstdint>
 #include <algorithm>
+#include <random>
+#include <sstream>
 #include <grpcpp/grpcpp.h>
 
 namespace {
+
+std::string newVelocityIdentity()
+{
+    std::random_device random;
+    std::ostringstream out;
+    for (int i = 0; i < 8; ++i) out << std::hex << random() << '-';
+    return out.str();
+}
+
+bool authenticatedVelocityPeer(grpc::ClientContext &context)
+{
+    const auto auth = context.auth_context();
+    if (!auth || !auth->IsPeerAuthenticated()) return false;
+    const auto transport = auth->FindPropertyValues("transport_security_type");
+    return transport.size() == 1 && transport.front() == "ssl";
+}
 
 template<typename UnregisterFn>
 struct ActiveContextGuard {
@@ -38,7 +56,7 @@ grpc::Status runStreamWithRetry(const std::string &stream_name,
             // configured retry policy instead of terminating this worker.
             status = grpc::Status(grpc::StatusCode::UNAVAILABLE, "Stream factory returned null");
         } else {
-            pump_loop(*stream);
+            pump_loop(*stream, context);
             stream->WritesDone();
             status = stream->Finish();
         }
@@ -132,6 +150,8 @@ grpc::Status grpcClient::DataExchange()
             if (stoppedStream.load()) {
                 return grpc::Status(grpc::StatusCode::CANCELLED, "Client was stopped");
             }
+            reply.clear_velocity_command();
+            reply.clear_request_velocity_lease();
             *controls_ = std::move(reply);
             return status;
         }
@@ -177,6 +197,10 @@ void grpcClient::unregisterStreamContext(grpc::ClientContext &context)
 void grpcClient::stopStream()
 {
     stoppedStream.store(true);
+    {
+        std::lock_guard<std::mutex> lock(velocity_hooks_mutex_);
+        if (revoke_velocity_) revoke_velocity_();
+    }
     // A disconnected operator must not leave its last control snapshot live.
     // This is state invalidation, not an authorized ROS motion/stop command.
     {
@@ -212,7 +236,19 @@ grpc::Status grpcClient::DataStreamExchange()
             }
             return stream;
         },
-        [this](grpc::ClientReaderWriter<Sensors, Controls> &stream) {
+        [this](grpc::ClientReaderWriter<Sensors, Controls> &stream, grpc::ClientContext &context) {
+            using Clock = std::chrono::steady_clock;
+            std::unique_lock<std::mutex> owner(velocity_stream_mutex_, std::try_to_lock);
+            rc::api::v2::VelocityLease lease;
+            std::string session;
+            bool request_held = false;
+            bool received_command = false;
+            Clock::time_point lease_deadline{};
+            const auto revoke = [&]() {
+                if (lease.granted() && revoke_velocity_) revoke_velocity_();
+                lease.Clear();
+                received_command = false;
+            };
             while (!stoppedStream)
             {
                 Sensors outgoing;
@@ -221,6 +257,9 @@ grpc::Status grpcClient::DataStreamExchange()
                     std::lock_guard<std::mutex> lock(*muClient);
                     outgoing = *sensors_;
                 }
+                outgoing.clear_velocity_lease();
+                if (lease.granted()) *outgoing.mutable_velocity_lease() = lease;
+                const auto sent = Clock::now();
                 if (!stream.Write(outgoing)) {
                     break;
                 }
@@ -229,6 +268,55 @@ grpc::Status grpcClient::DataStreamExchange()
                     break;
                 }
                 {
+                    std::lock_guard<std::mutex> lock(velocity_hooks_mutex_);
+                    if (owner.owns_lock() && !stoppedStream.load() &&
+                        authenticatedVelocityPeer(context) && outgoing.has_robot_info() &&
+                        outgoing.robot_info().has_base() && grant_velocity_ &&
+                        apply_velocity_ && revoke_velocity_) {
+                        const auto now = Clock::now();
+                        const bool request = incoming.request_velocity_lease();
+                        if (!request || (lease.granted() && now >= lease_deadline)) revoke();
+                        if (request && !request_held && !lease.granted() &&
+                            !incoming.has_velocity_command()) {
+                            if (session.empty()) session = newVelocityIdentity();
+                            const auto token = newVelocityIdentity();
+                            constexpr auto duration = std::chrono::milliseconds(30000);
+                            if (grant_velocity_(session, token, duration)) {
+                                lease.set_robot_id(outgoing.robot_info().robot_id());
+                                lease.set_session_id(session);
+                                lease.set_lease_id(token);
+                                lease.set_duration_ms(duration.count());
+                                lease.set_granted(true);
+                                lease_deadline = now + duration;
+                            }
+                        }
+                        request_held = request;
+                        if (lease.granted() && incoming.has_velocity_command()) {
+                            auto cmd = incoming.velocity_command();
+                            const auto elapsed = std::chrono::ceil<std::chrono::milliseconds>(now - sent).count();
+                            const auto ttl = cmd.velocity().valid_for_ms();
+                            if (!cmd.deadman() || !cmd.has_velocity() ||
+                                cmd.robot_id() != lease.robot_id() ||
+                                cmd.session_id() != lease.session_id() ||
+                                cmd.lease_id() != lease.lease_id() ||
+                                ttl > 1000 || elapsed >= ttl) {
+                                revoke();
+                            } else {
+                                cmd.mutable_velocity()->set_valid_for_ms(ttl - elapsed);
+                                if (!apply_velocity_(cmd)) revoke();
+                                else received_command = true;
+                            }
+                        } else if (received_command) {
+                            revoke();
+                        }
+                    } else if (owner.owns_lock()) {
+                        revoke();
+                    }
+                }
+                // The generic Controls snapshot must never be a second motion path.
+                incoming.clear_velocity_command();
+                incoming.clear_request_velocity_lease();
+                {
                     std::lock_guard<std::mutex> lock(*muClient);
                     // A late reply must not revive controls after shutdown.
                     if (stoppedStream.load()) {
@@ -236,6 +324,10 @@ grpc::Status grpcClient::DataStreamExchange()
                     }
                     *controls_ = std::move(incoming);
                 }
+            }
+            if (owner.owns_lock()) {
+                std::lock_guard<std::mutex> lock(velocity_hooks_mutex_);
+                revoke();
             }
             // EOF or network failure invalidates the operator snapshot even
             // when automatic reconnect is enabled. A new stream must deliver
@@ -268,7 +360,7 @@ grpc::Status grpcClient::MapStream()
             return std::shared_ptr<grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest>>(
                 stub_->MapStream(&context));
         },
-        [this](grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest> &stream) {
+        [this](grpc::ClientReaderWriter<map_service::GetMapResponse, map_service::GetMapRequest> &stream, grpc::ClientContext &) {
             map_service::GetMapRequest request;
             std::uint64_t last_seq = 0;
             bool has_seq = false;
@@ -330,7 +422,7 @@ grpc::Status grpcClient::PoseStream()
             return std::shared_ptr<grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest>>(
                 stub_->PoseStream(&context));
         },
-        [this](grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest> &stream) {
+        [this](grpc::ClientReaderWriter<map_service::PoseState, map_service::PoseRequest> &stream, grpc::ClientContext &) {
             map_service::PoseRequest request;
             map_service::PoseState state;
             map_service::Pose last_pose;
@@ -384,7 +476,7 @@ grpc::Status grpcClient::ZoneStream()
             return std::shared_ptr<grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest>>(
                 stub_->ZoneStream(&context));
         },
-        [this](grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest> &stream) {
+        [this](grpc::ClientReaderWriter<map_service::ZoneState, map_service::ZoneRequest> &stream, grpc::ClientContext &) {
             map_service::ZoneRequest request;
             map_service::ZoneState state;
             std::uint64_t last_seq = 0;

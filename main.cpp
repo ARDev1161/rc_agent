@@ -931,6 +931,19 @@ int main(int argc, char **argv)
   if (base_info) {
     baseControlNode = std::make_shared<BaseControlNode>(
       nullptr, *network->getClientInstance()->getMutex(), base_options, &*base_info, sensorsPtr);
+    std::weak_ptr<BaseControlNode> weak_base = baseControlNode;
+    network->getClientInstance()->setVelocityCallbacks(
+      [weak_base](const std::string &session, const std::string &lease, std::chrono::milliseconds duration) {
+        auto base = weak_base.lock();
+        return base && base->grantVelocityLease(session, lease, duration);
+      },
+      [weak_base](const rc::api::v2::VelocityCommand &cmd) {
+        auto base = weak_base.lock();
+        return base && base->applyVelocityCommand(cmd);
+      },
+      [weak_base]() {
+        if (auto base = weak_base.lock()) base->revokeVelocityLease();
+      });
   }
   // Read the same trusted Nav2 profile used by the libconfig GTests.
   // These are gateway-local bindings, not remote-selected action names.

@@ -14,16 +14,17 @@ namespace rc::api::v2 {
 class VelocityGate {
 public:
     using Clock = std::chrono::steady_clock;
-    void grant(const std::string& session, const std::string& lease, Clock::time_point now, std::chrono::milliseconds duration) {
+    bool grant(const std::string& session, const std::string& lease, Clock::time_point now, std::chrono::milliseconds duration) {
         std::lock_guard<std::mutex> lock(mutex_);
         revokeLocked();
         if (session.empty() || lease.empty() || pending_stop_ ||
-            duration.count() <= 0 || duration > std::chrono::seconds(60)) return;
+            duration.count() <= 0 || duration > std::chrono::seconds(60)) return false;
         session_ = session;
         lease_ = lease;
         lease_started_ = now;
         lease_deadline_ = now + duration;
         active_ = true;
+        return true;
     }
     void revoke() {
         std::lock_guard<std::mutex> lock(mutex_);

@@ -296,6 +296,25 @@ void BaseControlNode::publishToBaseControlNode(const geometry_msgs::msg::Twist& 
     }
 }
 
+bool BaseControlNode::grantVelocityLease(const std::string &session, const std::string &lease,
+                                         std::chrono::milliseconds duration) {
+    std::lock_guard<std::mutex> lock(velocity_publish_mutex_);
+    if (base_info_.axis_limits_size() == 0) return false;
+    return velocity_gate_.grant(session, lease, rc::api::v2::VelocityGate::Clock::now(), duration);
+}
+
+bool BaseControlNode::applyVelocityCommand(const rc::api::v2::VelocityCommand &command) {
+    return publishLeasedVelocity(command.velocity(), command.session_id(), command.lease_id(), command.deadman());
+}
+
+void BaseControlNode::revokeVelocityLease() {
+    {
+        std::lock_guard<std::mutex> lock(velocity_publish_mutex_);
+        velocity_gate_.revoke();
+    }
+    checkVelocityWatchdog();
+}
+
 bool BaseControlNode::publishLeasedVelocity(const rc::api::v2::Velocity& velocity,
                                             const std::string& session,
                                             const std::string& lease, bool deadman) {
